@@ -152,6 +152,16 @@ impl Playback {
         Some(Duration::from_secs(secs.into()))
     }
 
+    /// How loud the music is right now (0 to about 1), for visualizers; 0 unless playing.
+    /// The volume setting does not affect it.
+    #[expect(dead_code, reason = "for the Sprint 2 visualizer, merged from the sprint-2 branch")]
+    pub fn audio_level(&self) -> f32 {
+        match &self.player {
+            Some(player) if self.is_playing() => player.level(),
+            _ => 0.,
+        }
+    }
+
     /// The theme seed taken from the current cover.
     pub fn seed(&self) -> Option<Hsla> {
         self.seed
