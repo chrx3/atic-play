@@ -19,6 +19,7 @@ mod playlist_view;
 mod queue_panel;
 mod search_view;
 mod settings;
+mod settings_view;
 mod sidebar;
 mod sign_in;
 mod ui;
