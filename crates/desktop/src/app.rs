@@ -11,10 +11,13 @@ use gpui_m3::{
 use ytm_core::{Client, Playlist};
 
 use crate::account::Account;
+use crate::album_view::AlbumView;
+use crate::artist_view::ArtistView;
 use crate::covers::Covers;
 use crate::home_view::HomeView;
 use crate::library_view::{LibraryEvent, LibraryView};
 use crate::lyrics_panel::LyricsPanel;
+use crate::navigation::{Navigation, NavigationEvent, render_track_menu};
 use crate::now_playing_view::{NowPlayingEvent, NowPlayingView};
 use crate::playback::Playback;
 use crate::player_bar::{PlayerBar, PlayerBarEvent};
@@ -46,11 +49,15 @@ pub struct YtmApp {
     /// The id of the playlist page on screen, to highlight it in the sidebar.
     open_playlist: Option<String>,
     account: Entity<Account>,
+    playback: Entity<Playback>,
+    navigation: Entity<Navigation>,
     search_field: Entity<TextField>,
     home_view: Entity<HomeView>,
     search_view: Entity<SearchView>,
     library_view: Entity<LibraryView>,
     playlist_view: Entity<PlaylistView>,
+    album_view: Entity<AlbumView>,
+    artist_view: Entity<ArtistView>,
     queue_panel: Entity<QueuePanel>,
     lyrics_panel: Entity<LyricsPanel>,
     now_playing_view: Entity<NowPlayingView>,
@@ -71,20 +78,76 @@ impl YtmApp {
         let covers = cx.new(|_| Covers::new(client.clone()));
         let account = cx.new(|cx| Account::new(client.clone(), data_dir, cx));
         let playback = cx.new(|cx| Playback::new(client.clone(), cx));
-        let library_view =
-            cx.new(|cx| LibraryView::new(account.clone(), playback.clone(), covers.clone(), cx));
-        let home_view =
-            cx.new(|cx| HomeView::new(client.clone(), playback.clone(), covers.clone(), cx));
-        let search_view =
-            cx.new(|cx| SearchView::new(client.clone(), playback.clone(), covers.clone(), cx));
-        let playlist_view =
-            cx.new(|cx| PlaylistView::new(client.clone(), playback.clone(), covers.clone(), cx));
-        let queue_panel = cx.new(|cx| QueuePanel::new(playback.clone(), covers.clone(), cx));
+        let navigation = cx.new(|_| Navigation::new());
+        let library_view = cx.new(|cx| {
+            LibraryView::new(
+                account.clone(),
+                playback.clone(),
+                covers.clone(),
+                navigation.clone(),
+                cx,
+            )
+        });
+        let home_view = cx.new(|cx| {
+            HomeView::new(
+                client.clone(),
+                playback.clone(),
+                covers.clone(),
+                account.clone(),
+                navigation.clone(),
+                cx,
+            )
+        });
+        let search_view = cx.new(|cx| {
+            SearchView::new(
+                client.clone(),
+                playback.clone(),
+                covers.clone(),
+                navigation.clone(),
+                cx,
+            )
+        });
+        let playlist_view = cx.new(|cx| {
+            PlaylistView::new(
+                client.clone(),
+                playback.clone(),
+                covers.clone(),
+                navigation.clone(),
+                cx,
+            )
+        });
+        let album_view = cx.new(|cx| {
+            AlbumView::new(
+                client.clone(),
+                playback.clone(),
+                covers.clone(),
+                navigation.clone(),
+                cx,
+            )
+        });
+        let artist_view = cx.new(|cx| {
+            ArtistView::new(
+                client.clone(),
+                playback.clone(),
+                covers.clone(),
+                navigation.clone(),
+                cx,
+            )
+        });
+        let queue_panel =
+            cx.new(|cx| QueuePanel::new(playback.clone(), covers.clone(), navigation.clone(), cx));
         let lyrics_panel = cx.new(|cx| LyricsPanel::new(playback.clone(), cx));
         let now_playing_view = cx.new(|cx| {
-            NowPlayingView::new(playback.clone(), covers.clone(), lyrics_panel.clone(), cx)
+            NowPlayingView::new(
+                playback.clone(),
+                covers.clone(),
+                account.clone(),
+                lyrics_panel.clone(),
+                cx,
+            )
         });
-        let player_bar = cx.new(|cx| PlayerBar::new(playback.clone(), covers.clone(), cx));
+        let player_bar =
+            cx.new(|cx| PlayerBar::new(playback.clone(), covers.clone(), account.clone(), cx));
         let search_field = cx.new(|cx| {
             TextField::new(cx)
                 .placeholder("¿Qué quieres escuchar?")
@@ -133,6 +196,23 @@ impl YtmApp {
                     }
                 },
             ),
+            cx.subscribe(
+                &navigation,
+                |this, _, event: &NavigationEvent, cx| match event {
+                    NavigationEvent::OpenAlbum { id, summary } => {
+                        this.navigate(Route::Album, cx);
+                        this.album_view
+                            .update(cx, |view, cx| view.open(id.clone(), summary.clone(), cx));
+                    }
+                    NavigationEvent::OpenArtist { id, summary } => {
+                        this.navigate(Route::Artist, cx);
+                        this.artist_view
+                            .update(cx, |view, cx| view.open(id.clone(), summary.clone(), cx));
+                    }
+                },
+            ),
+            // The song menu opens and closes.
+            cx.observe(&navigation, |_, _, cx| cx.notify()),
             // The sidebar shows the session and the playlists; the dialog closes once signed in.
             cx.observe(&account, |this, account, cx| {
                 if account.read(cx).is_signed_in() {
@@ -164,11 +244,15 @@ impl YtmApp {
             route: Route::Home,
             open_playlist: None,
             account,
+            playback,
+            navigation,
             search_field,
             home_view,
             search_view,
             library_view,
             playlist_view,
+            album_view,
+            artist_view,
             queue_panel,
             lyrics_panel,
             now_playing_view,
@@ -186,7 +270,8 @@ impl YtmApp {
 
     /// Shows `route`, leaving "Reproduciendo" if it is open.
     fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
-        if route != self.route {
+        // Album and artist pages replace each other under the same route: each is a new page.
+        if route != self.route || matches!(route, Route::Album | Route::Artist) {
             self.page_generation += 1;
         }
         self.route = route;
@@ -240,6 +325,8 @@ impl YtmApp {
             Route::Explore => None,
             Route::Library => Some(AnyView::from(self.library_view.clone())),
             Route::Playlist => Some(AnyView::from(self.playlist_view.clone())),
+            Route::Album => Some(AnyView::from(self.album_view.clone())),
+            Route::Artist => Some(AnyView::from(self.artist_view.clone())),
         };
         let page = match view {
             // Cached: the player bar redraws the window every frame while the wave moves. Not
@@ -439,6 +526,12 @@ impl Render for YtmApp {
             .font_family(gpui_m3::theme::FONT_FAMILY)
             .child(main)
             .child(self.player_bar.clone())
+            .children(render_track_menu(
+                &self.navigation,
+                &self.playback,
+                &self.account,
+                cx,
+            ))
             .children(sign_in)
     }
 }

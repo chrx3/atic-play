@@ -4,6 +4,7 @@ use gpui::{
 use gpui_m3::{ListItem, ShapeName, Spring, Theme, motion};
 
 use crate::covers::Covers;
+use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::ui::{format_time, placeholder, section_title, thumbnail, track_cover};
 
@@ -22,11 +23,17 @@ const MAX_UPCOMING: usize = 50;
 pub struct QueuePanel {
     playback: Entity<Playback>,
     covers: Entity<Covers>,
+    navigation: Entity<Navigation>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl QueuePanel {
-    pub fn new(playback: Entity<Playback>, covers: Entity<Covers>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        playback: Entity<Playback>,
+        covers: Entity<Covers>,
+        navigation: Entity<Navigation>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // Only queue changes matter here, not every progress tick, so compare before redrawing.
         let mut last_seen = None;
         let subscriptions = vec![
@@ -47,6 +54,7 @@ impl QueuePanel {
         QueuePanel {
             playback,
             covers,
+            navigation,
             _subscriptions: subscriptions,
         }
     }
@@ -113,7 +121,7 @@ impl Render for QueuePanel {
                 .relative()
                 .left(px((1. - progress) * ROW_SLIDE))
                 .opacity(progress.clamp(0., 1.))
-                .child(item)
+                .child(with_track_menu(item, &track, &self.navigation))
         });
         let rows: Vec<_> = rows.collect();
 

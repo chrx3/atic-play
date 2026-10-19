@@ -4,10 +4,11 @@ use gpui::{
 };
 use gpui_m3::{IconButton, Shape, ShapeName, Theme};
 
+use crate::account::Account;
 use crate::covers::Covers;
 use crate::lyrics_panel::LyricsPanel;
 use crate::playback::Playback;
-use crate::ui::{placeholder, track_cover};
+use crate::ui::{like_button, placeholder, track_cover};
 
 const COVER_SIZE: u32 = 544;
 const COVER_WIDTH: f32 = 360.;
@@ -21,6 +22,7 @@ pub enum NowPlayingEvent {
 pub struct NowPlayingView {
     playback: Entity<Playback>,
     covers: Entity<Covers>,
+    account: Entity<Account>,
     lyrics_panel: Entity<LyricsPanel>,
     _subscriptions: Vec<Subscription>,
 }
@@ -31,6 +33,7 @@ impl NowPlayingView {
     pub fn new(
         playback: Entity<Playback>,
         covers: Entity<Covers>,
+        account: Entity<Account>,
         lyrics_panel: Entity<LyricsPanel>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -45,10 +48,12 @@ impl NowPlayingView {
                 }
             }),
             cx.observe(&covers, |_, _, cx| cx.notify()),
+            cx.observe(&account, |_, _, cx| cx.notify()),
         ];
         NowPlayingView {
             playback,
             covers,
+            account,
             lyrics_panel,
             _subscriptions: subscriptions,
         }
@@ -162,7 +167,8 @@ impl Render for NowPlayingView {
                             .truncate()
                             .child(album)
                     })),
-            );
+            )
+            .children(like_button("like-now-playing", &track, &self.account, cx));
 
         div()
             .size_full()

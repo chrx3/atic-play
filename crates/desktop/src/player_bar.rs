@@ -8,11 +8,12 @@ use gpui::{
 use gpui_m3::{IconButton, LoadingIndicator, Shape, ShapeName, Slider, Theme, Tooltip};
 use ytm_core::RepeatMode;
 
+use crate::account::Account;
 use crate::assets;
 use crate::audio_wave::AudioWave;
 use crate::covers::Covers;
 use crate::playback::Playback;
-use crate::ui::{format_time, track_cover};
+use crate::ui::{format_time, like_button, track_cover};
 
 const COVER_SIZE: u32 = 120;
 const SIDE_WIDTH: f32 = 300.;
@@ -28,6 +29,7 @@ pub enum PlayerBarEvent {
 pub struct PlayerBar {
     playback: Entity<Playback>,
     covers: Entity<Covers>,
+    account: Entity<Account>,
     queue_open: bool,
     now_playing_open: bool,
     /// Where the progress wave was laid out, to turn a click into a position.
@@ -38,14 +40,22 @@ pub struct PlayerBar {
 impl EventEmitter<PlayerBarEvent> for PlayerBar {}
 
 impl PlayerBar {
-    pub fn new(playback: Entity<Playback>, covers: Entity<Covers>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        playback: Entity<Playback>,
+        covers: Entity<Covers>,
+        account: Entity<Account>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscriptions = vec![
             cx.observe(&playback, |_, _, cx| cx.notify()),
             cx.observe(&covers, |_, _, cx| cx.notify()),
+            // The like button follows the session and the liked songs.
+            cx.observe(&account, |_, _, cx| cx.notify()),
         ];
         PlayerBar {
             playback,
             covers,
+            account,
             queue_open: true,
             now_playing_open: false,
             progress_bounds: Rc::default(),
@@ -114,7 +124,7 @@ impl PlayerBar {
                     })
                     .child(shape),
             )
-            .children(track.map(|track| {
+            .children(track.clone().map(|track| {
                 div()
                     .flex()
                     .flex_col()
@@ -133,6 +143,9 @@ impl PlayerBar {
                             .child(track.artists),
                     )
             }))
+            .children(
+                track.and_then(|track| like_button("like-current", &track, &self.account, cx)),
+            )
     }
 
     fn render_transport(&self, cx: &mut Context<Self>) -> impl IntoElement {

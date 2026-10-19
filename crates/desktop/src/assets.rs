@@ -28,6 +28,10 @@ icons! {
     HOME => "home",
     EXPLORE => "explore",
     LIBRARY => "library",
+    HEART => "heart",
+    HEART_FILL => "heart-fill",
+    PERSON => "person",
+    ALBUM => "album",
 }
 
 pub const LOGO: &str = "brand/atic-play.png";

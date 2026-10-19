@@ -1,5 +1,7 @@
 mod account;
+mod album_view;
 mod app;
+mod artist_view;
 mod assets;
 mod audio_wave;
 mod covers;
@@ -8,6 +10,7 @@ mod home_view;
 mod library_view;
 mod lyrics_panel;
 mod media_session;
+mod navigation;
 mod now_playing_view;
 mod playback;
 mod player_bar;
