@@ -5,6 +5,7 @@ mod artist_view;
 mod assets;
 mod audio_wave;
 mod covers;
+mod download_ui;
 mod downloads;
 mod google_sign_in;
 mod home_view;

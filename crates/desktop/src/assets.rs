@@ -32,6 +32,9 @@ icons! {
     HEART_FILL => "heart-fill",
     PERSON => "person",
     ALBUM => "album",
+    DOWNLOAD => "download",
+    DOWNLOAD_DONE => "download-done",
+    OFFLINE => "offline",
 }
 
 pub const LOGO: &str = "brand/atic-play.png";

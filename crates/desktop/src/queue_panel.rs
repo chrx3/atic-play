@@ -4,6 +4,8 @@ use gpui::{
 use gpui_m3::{ListItem, ShapeName, Spring, Theme, motion};
 
 use crate::covers::Covers;
+use crate::download_ui::downloaded_mark;
+use crate::downloads::Downloads;
 use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::ui::{format_time, placeholder, section_title, thumbnail, track_cover};
@@ -50,6 +52,8 @@ impl QueuePanel {
                 }
             }),
             cx.observe(&covers, |_, _, cx| cx.notify()),
+            // The marks on downloaded songs.
+            cx.observe(&Downloads::global(cx), |_, _, cx| cx.notify()),
         ];
         QueuePanel {
             playback,
@@ -92,6 +96,7 @@ impl Render for QueuePanel {
             cx,
         );
 
+        let downloads = Downloads::global(cx);
         let rows = upcoming.into_iter().enumerate().map(|(offset, track)| {
             let thumb = self.covers.update(cx, |covers, cx| {
                 covers.get(&track.id, track.cover_url.as_deref(), THUMB_SIZE, cx)
@@ -102,9 +107,11 @@ impl Render for QueuePanel {
                 Some(secs) => format!("{} · {}", track.artists, format_time(secs.into())),
                 None => track.artists.clone(),
             };
+            let mark = downloaded_mark(("upcoming-downloaded", index), &track.id, &downloads, cx);
             let item = ListItem::new(("upcoming", index), track.title.clone())
                 .subtitle(subtitle)
                 .leading(thumbnail(thumb, 40., 6., cx))
+                .trailing(div().children(mark))
                 .on_click(move |_: &ClickEvent, _, cx| {
                     playback.update(cx, |playback, cx| playback.play_index(index, cx));
                 });

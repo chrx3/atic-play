@@ -9,6 +9,8 @@ use ytm_core::{Client, Playlist, PlaylistPage, Track};
 
 use crate::assets;
 use crate::covers::Covers;
+use crate::download_ui::{download_button, downloaded_mark};
+use crate::downloads::Downloads;
 use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::ui::{CARD_COVER_SIZE, format_time, placeholder, skeleton_rows, thumbnail};
@@ -28,6 +30,7 @@ pub struct PlaylistView {
     playback: Entity<Playback>,
     covers: Entity<Covers>,
     navigation: Entity<Navigation>,
+    downloads: Entity<Downloads>,
     /// What the sidebar or library already knew, shown while the tracks load.
     summary: Option<Playlist>,
     state: State,
@@ -44,12 +47,18 @@ impl PlaylistView {
         navigation: Entity<Navigation>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscriptions = vec![cx.observe(&covers, |_, _, cx| cx.notify())];
+        let downloads = Downloads::global(cx);
+        let subscriptions = vec![
+            cx.observe(&covers, |_, _, cx| cx.notify()),
+            // Download progress and the marks on downloaded songs.
+            cx.observe(&downloads, |_, _, cx| cx.notify()),
+        ];
         PlaylistView {
             client,
             playback,
             covers,
             navigation,
+            downloads,
             summary: None,
             state: State::Loading,
             generation: 0,
@@ -120,12 +129,24 @@ impl PlaylistView {
                             .child(thumbnail(thumb, 40., 6., cx)),
                     )
                     .trailing(
-                        div().text_sm().text_color(s.on_surface_variant).child(
-                            track
-                                .duration_secs
-                                .map(|secs| format_time(secs.into()))
-                                .unwrap_or_default(),
-                        ),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .children(downloaded_mark(
+                                ("playlist-downloaded", index),
+                                &track.id,
+                                &self.downloads,
+                                cx,
+                            ))
+                            .child(
+                                div().text_sm().text_color(s.on_surface_variant).child(
+                                    track
+                                        .duration_secs
+                                        .map(|secs| format_time(secs.into()))
+                                        .unwrap_or_default(),
+                                ),
+                            ),
                     )
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         let tracks = this.tracks().to_vec();
@@ -232,7 +253,16 @@ impl PlaylistView {
                                             playback.play_shuffled(tracks, cx)
                                         });
                                     })),
-                            ),
+                            )
+                            .children(page.filter(|_| has_tracks).map(|page| {
+                                download_button(
+                                    &page.playlist.id,
+                                    &page.playlist.title,
+                                    &page.tracks,
+                                    &self.downloads,
+                                    cx,
+                                )
+                            })),
                     ),
             )
     }
