@@ -1,11 +1,14 @@
 mod account;
 mod app;
 mod assets;
+mod audio_wave;
 mod covers;
 mod google_sign_in;
 mod home_view;
 mod library_view;
+mod lyrics_panel;
 mod media_session;
+mod now_playing_view;
 mod playback;
 mod player_bar;
 mod playlist_view;

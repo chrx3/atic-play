@@ -4,13 +4,13 @@ use gpui::{
     AnyElement, ClickEvent, Context, Entity, FontWeight, SharedString, Subscription, Window, div,
     prelude::*, px, uniform_list,
 };
-use gpui_m3::{IconButton, ListItem, LoadingIndicator, Theme};
+use gpui_m3::{IconButton, ListItem, Theme};
 use ytm_core::{Client, Playlist, PlaylistPage, Track};
 
 use crate::assets;
 use crate::covers::Covers;
 use crate::playback::Playback;
-use crate::ui::{CARD_COVER_SIZE, format_time, placeholder, thumbnail};
+use crate::ui::{CARD_COVER_SIZE, format_time, placeholder, skeleton_rows, thumbnail};
 
 const THUMB_SIZE: u32 = 120;
 const COVER_WIDTH: f32 = 200.;
@@ -242,12 +242,7 @@ impl Render for PlaylistView {
         }
         let s = *Theme::of(cx);
         let body = match &self.state {
-            State::Loading => div()
-                .pt_16()
-                .flex()
-                .justify_center()
-                .child(LoadingIndicator::new().size(px(48.)))
-                .into_any_element(),
+            State::Loading => div().px_4().child(skeleton_rows(10)).into_any_element(),
             State::Failed(error) => div()
                 .pt_16()
                 .px_4()

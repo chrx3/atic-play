@@ -1,12 +1,13 @@
 use std::rc::Rc;
 
 use gpui::{App, ClickEvent, Entity, Window, div, img, prelude::*, px};
-use gpui_m3::{Button, LoadingIndicator, NavItem, Theme};
+use gpui_m3::{Button, NavItem, Theme};
 
 use ytm_core::Playlist;
 
 use crate::account::{Account, AccountState};
 use crate::assets;
+use crate::ui::skeleton;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
@@ -98,9 +99,17 @@ impl Sidebar {
                 div().flex().flex_col().children(items).into_any_element()
             }
             (AccountState::SignedIn, None) | (AccountState::Restoring, _) => div()
-                .px_3()
-                .pt_2()
-                .child(LoadingIndicator::new().size(px(32.)))
+                .flex()
+                .flex_col()
+                .children((0..5).map(|index| {
+                    let width = 90. + (index * 37 % 70) as f32;
+                    div()
+                        .h(px(36.))
+                        .px_4()
+                        .flex()
+                        .items_center()
+                        .child(skeleton(Some(width), 12., 6.).order(index))
+                }))
                 .into_any_element(),
             _ => hint("Inicia sesión para ver tus playlists"),
         };

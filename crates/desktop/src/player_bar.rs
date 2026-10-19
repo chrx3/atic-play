@@ -5,19 +5,21 @@ use gpui::{
     Bounds, ClickEvent, Context, Entity, EventEmitter, FontWeight, MouseButton, MouseDownEvent,
     Pixels, Subscription, Window, canvas, div, prelude::*, px,
 };
-use gpui_m3::{IconButton, LoadingIndicator, Shape, ShapeName, Slider, Theme, WavyProgress};
+use gpui_m3::{IconButton, LoadingIndicator, Shape, ShapeName, Slider, Theme, Tooltip};
 use ytm_core::RepeatMode;
 
 use crate::assets;
+use crate::audio_wave::AudioWave;
 use crate::covers::Covers;
 use crate::playback::Playback;
-use crate::ui::format_time;
+use crate::ui::{format_time, track_cover};
 
 const COVER_SIZE: u32 = 120;
 const SIDE_WIDTH: f32 = 300.;
 
 pub enum PlayerBarEvent {
     ToggleQueue,
+    ToggleNowPlaying,
 }
 
 /// Bottom bar: current track, transport controls, seekable progress and volume.
@@ -27,6 +29,7 @@ pub struct PlayerBar {
     playback: Entity<Playback>,
     covers: Entity<Covers>,
     queue_open: bool,
+    now_playing_open: bool,
     /// Where the progress wave was laid out, to turn a click into a position.
     progress_bounds: Rc<Cell<Bounds<Pixels>>>,
     _subscriptions: Vec<Subscription>,
@@ -44,6 +47,7 @@ impl PlayerBar {
             playback,
             covers,
             queue_open: true,
+            now_playing_open: false,
             progress_bounds: Rc::default(),
             _subscriptions: subscriptions,
         }
@@ -51,6 +55,11 @@ impl PlayerBar {
 
     pub fn set_queue_open(&mut self, open: bool, cx: &mut Context<Self>) {
         self.queue_open = open;
+        cx.notify();
+    }
+
+    pub fn set_now_playing_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.now_playing_open = open;
         cx.notify();
     }
 
@@ -64,7 +73,7 @@ impl PlayerBar {
             .update(cx, |playback, cx| playback.seek_fraction(fraction, cx));
     }
 
-    fn render_track(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_track(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = *Theme::of(cx);
         let playback = self.playback.read(cx);
         let track = playback.current().cloned();
@@ -74,17 +83,37 @@ impl PlayerBar {
             })
         });
 
-        let shape = Shape::new(ShapeName::Cookie9).size(px(56.));
-        let shape = match cover {
-            Some(path) => shape.image(path.as_path()),
-            None => shape.color(s.surface_container_highest),
+        let shapes = (ShapeName::Cookie9, ShapeName::Clover8);
+        let shape = match &track {
+            Some(track) => track_cover("bar", &track.id, cover, shapes, 56., window, cx),
+            None => Shape::new(shapes.0)
+                .size(px(56.))
+                .color(s.surface_container_highest),
         };
+        let has_track = track.is_some();
         div()
             .w(px(SIDE_WIDTH))
             .flex()
             .items_center()
             .gap_3()
-            .child(shape)
+            .child(
+                div()
+                    .id("now-playing-cover")
+                    .flex_none()
+                    .when(has_track, |cover| {
+                        cover
+                            .cursor_pointer()
+                            .tooltip(Tooltip::text(if self.now_playing_open {
+                                "Cerrar Reproduciendo"
+                            } else {
+                                "Abrir Reproduciendo"
+                            }))
+                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                                cx.emit(PlayerBarEvent::ToggleNowPlaying)
+                            }))
+                    })
+                    .child(shape),
+            )
             .children(track.map(|track| {
                 div()
                     .flex()
@@ -116,6 +145,7 @@ impl PlayerBar {
         let repeat = playback.queue().repeat();
         let position = playback.position();
         let duration = playback.duration();
+        let level = playback.audio_level();
         let progress = duration.map(|duration| {
             (position.as_secs_f32() / duration.as_secs_f32().max(1.)).clamp(0., 1.)
         });
@@ -222,7 +252,7 @@ impl PlayerBar {
                             .flex()
                             .items_center()
                             .when(duration.is_some(), |bar| bar.cursor_pointer())
-                            .child(WavyProgress::new("progress", progress.or(Some(0.))))
+                            .child(AudioWave::new("progress", progress.unwrap_or(0.), level))
                             .child(
                                 canvas(
                                     move |bounds, _, _| progress_bounds.set(bounds),
@@ -315,7 +345,7 @@ impl PlayerBar {
 }
 
 impl Render for PlayerBar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = *Theme::of(cx);
         let error = self.playback.read(cx).error().cloned();
         div()
@@ -338,7 +368,7 @@ impl Render for PlayerBar {
                     .items_center()
                     .justify_between()
                     .gap_4()
-                    .child(self.render_track(cx))
+                    .child(self.render_track(window, cx))
                     .child(self.render_transport(cx))
                     .child(self.render_volume(cx)),
             )

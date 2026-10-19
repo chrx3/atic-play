@@ -1,11 +1,19 @@
-use gpui::{ClickEvent, Context, Entity, FontWeight, Subscription, Window, div, prelude::*, px};
-use gpui_m3::{ListItem, Shape, ShapeName, Theme};
+use gpui::{
+    ClickEvent, Context, ElementId, Entity, FontWeight, Subscription, Window, div, prelude::*, px,
+};
+use gpui_m3::{ListItem, ShapeName, Spring, Theme, motion};
 
 use crate::covers::Covers;
 use crate::playback::Playback;
-use crate::ui::{format_time, placeholder, section_title, thumbnail};
+use crate::ui::{format_time, placeholder, section_title, thumbnail, track_cover};
 
 const THUMB_SIZE: u32 = 120;
+/// Seconds between the entrances of consecutive new rows.
+const ROW_STAGGER: f32 = 0.035;
+/// Rows past this one enter together, so a long new queue does not trickle in.
+const MAX_STAGGERED: usize = 12;
+/// How far a new row slides in from the right.
+const ROW_SLIDE: f32 = 24.;
 const COVER_SIZE: u32 = 544;
 /// Enough to see what comes; a radio queue can grow to hundreds of tracks.
 const MAX_UPCOMING: usize = 50;
@@ -45,7 +53,7 @@ impl QueuePanel {
 }
 
 impl Render for QueuePanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = *Theme::of(cx);
         let playback = self.playback.read(cx);
         let Some(current) = playback.current().cloned() else {
@@ -66,11 +74,15 @@ impl Render for QueuePanel {
         let cover_path = self.covers.update(cx, |covers, cx| {
             covers.get(&current.id, current.cover_url.as_deref(), COVER_SIZE, cx)
         });
-        let cover = Shape::new(ShapeName::Cookie12).size(px(256.));
-        let cover = match cover_path {
-            Some(path) => cover.image(path.as_path()),
-            None => cover.color(s.surface_container_highest),
-        };
+        let cover = track_cover(
+            "queue",
+            &current.id,
+            cover_path,
+            (ShapeName::Cookie12, ShapeName::Sunny),
+            256.,
+            window,
+            cx,
+        );
 
         let rows = upcoming.into_iter().enumerate().map(|(offset, track)| {
             let thumb = self.covers.update(cx, |covers, cx| {
@@ -82,12 +94,26 @@ impl Render for QueuePanel {
                 Some(secs) => format!("{} · {}", track.artists, format_time(secs.into())),
                 None => track.artists.clone(),
             };
-            ListItem::new(("upcoming", index), track.title.clone())
+            let item = ListItem::new(("upcoming", index), track.title.clone())
                 .subtitle(subtitle)
                 .leading(thumbnail(thumb, 40., 6., cx))
                 .on_click(move |_: &ClickEvent, _, cx| {
                     playback.update(cx, |playback, cx| playback.play_index(index, cx));
-                })
+                });
+            // Keyed by place and song: rows that stay when the queue advances keep still, and
+            // only songs new to a place slide in.
+            let progress = motion::entrance(
+                ElementId::Name(format!("queue-row-{index}-{}", track.id).into()),
+                Spring::SPATIAL,
+                offset.min(MAX_STAGGERED) as f32 * ROW_STAGGER,
+                window,
+                cx,
+            );
+            div()
+                .relative()
+                .left(px((1. - progress) * ROW_SLIDE))
+                .opacity(progress.clamp(0., 1.))
+                .child(item)
         });
         let rows: Vec<_> = rows.collect();
 

@@ -2,14 +2,15 @@ use gpui::{
     AnyElement, ClickEvent, Context, Entity, SharedString, Subscription, Window, div, prelude::*,
     px,
 };
-use gpui_m3::{Button, ListItem, LoadingIndicator, Theme};
+use gpui_m3::{Button, ListItem, Theme};
 use ytm_core::{Client, HomeFeed, Track};
 
 use crate::covers::Covers;
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening};
 use crate::ui::{
-    CARD_COVER_SIZE, CARD_WIDTH, format_time, media_card, placeholder, section_title, thumbnail,
+    CARD_COVER_SIZE, CARD_WIDTH, format_time, media_card, placeholder, section_title, skeleton,
+    skeleton_cards, skeleton_rows, thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -162,10 +163,26 @@ impl Render for HomeView {
             State::Loading => {
                 return div()
                     .size_full()
+                    .px_4()
                     .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(LoadingIndicator::new().size(px(56.)))
+                    .flex_col()
+                    .gap_8()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(skeleton(Some(160.), 20., 10.))
+                            .child(skeleton_rows(4)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(skeleton(Some(220.), 20., 10.))
+                            .child(skeleton_cards(6, false)),
+                    )
                     .into_any_element();
             }
             State::Failed(error) => {

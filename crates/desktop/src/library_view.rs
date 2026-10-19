@@ -1,8 +1,7 @@
 use gpui::{
     AnyElement, ClickEvent, Context, Entity, EventEmitter, Subscription, Window, div, prelude::*,
-    px,
 };
-use gpui_m3::{Button, IconButton, ListItem, LoadingIndicator, Segment, SegmentedButtons, Theme};
+use gpui_m3::{Button, IconButton, ListItem, Segment, SegmentedButtons, Theme};
 use ytm_core::{Library, Playlist};
 
 use crate::account::{Account, AccountState};
@@ -10,7 +9,8 @@ use crate::covers::Covers;
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening};
 use crate::ui::{
-    CARD_COVER_SIZE, CARD_WIDTH, format_time, media_card, placeholder, section_title, thumbnail,
+    CARD_COVER_SIZE, CARD_WIDTH, format_time, media_card, placeholder, section_title,
+    skeleton_rows, thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -144,10 +144,8 @@ impl Render for LibraryView {
             AccountState::Restoring | AccountState::SigningIn => {
                 return div()
                     .size_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(LoadingIndicator::new().size(px(56.)))
+                    .pt_4()
+                    .child(skeleton_rows(8))
                     .into_any_element();
             }
             AccountState::SignedOut => {
@@ -177,10 +175,8 @@ impl Render for LibraryView {
             }
             return div()
                 .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(LoadingIndicator::new().size(px(56.)))
+                .pt_4()
+                .child(skeleton_rows(8))
                 .into_any_element();
         };
 
