@@ -2,11 +2,13 @@
 
 use std::path::PathBuf;
 
+use std::f32::consts::TAU;
+
 use gpui::{
     AnyElement, App, Div, ElementId, FontWeight, ObjectFit, SharedString, Stateful, StyledImage,
-    div, img, prelude::*, px,
+    Window, div, img, prelude::*, px,
 };
-use gpui_m3::{LoadingIndicator, Shape, ShapeName, Theme};
+use gpui_m3::{LoadingIndicator, Shape, ShapeName, Spring, Theme, motion};
 
 pub fn format_time(total_secs: u64) -> String {
     format!("{}:{:02}", total_secs / 60, total_secs % 60)
@@ -93,6 +95,46 @@ pub fn media_card(
         }))
 }
 
+/// The cover of the track `track_id` in the first of `shapes`. When the track changes, the new
+/// cover pops in while its outline morphs toward the second shape and settles back. `slot` tells apart the places that
+/// show the same track (element ids must be unique in a window).
+pub fn track_cover(
+    slot: &str,
+    track_id: &str,
+    path: Option<PathBuf>,
+    (shape, morph): (ShapeName, ShapeName),
+    size: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> Shape {
+    let id = SharedString::from(format!("{slot}-cover-{track_id}"));
+    let [scale, turn] = motion::animate_from(
+        ElementId::from((id.clone(), 0usize)),
+        Spring::SPATIAL,
+        [0.8, -0.4],
+        [1., 0.],
+        window,
+        cx,
+    );
+    let arriving = motion::entrance(
+        ElementId::from((id.clone(), 1usize)),
+        Spring::EFFECTS,
+        0.,
+        window,
+        cx,
+    ) < 0.6;
+    let cover = Shape::new(shape)
+        .size(px(size))
+        .scale(scale)
+        .rotate(turn)
+        .breathe_on_hover(ElementId::from((id, 2usize)), morph)
+        .hovered(arriving);
+    match path {
+        Some(path) => cover.image(path.as_path()),
+        None => cover.color(Theme::of(cx).surface_container_highest),
+    }
+}
+
 /// A round artist picture, or a tonal circle while it downloads.
 pub fn avatar(path: Option<PathBuf>, size: f32, cx: &App) -> Shape {
     let shape = Shape::new(ShapeName::Circle).size(px(size));
@@ -134,4 +176,108 @@ pub fn placeholder(title: impl Into<SharedString>, body: impl Into<SharedString>
                 .text_color(Theme::of(cx).on_surface_variant)
                 .child(body.into()),
         )
+}
+
+/// Seconds per skeleton pulse.
+const SKELETON_PERIOD: f32 = 1.6;
+/// How far behind each skeleton block pulses, so the pulse sweeps down a list like a shimmer.
+const SKELETON_STAGGER: f32 = 0.12;
+
+/// A tonal block that pulses where content is still loading.
+#[derive(IntoElement)]
+pub struct Skeleton {
+    width: Option<f32>,
+    height: f32,
+    radius: f32,
+    order: usize,
+}
+
+/// A skeleton block `width` × `height` (full width when `width` is `None`).
+pub fn skeleton(width: Option<f32>, height: f32, radius: f32) -> Skeleton {
+    Skeleton {
+        width,
+        height,
+        radius,
+        order: 0,
+    }
+}
+
+impl Skeleton {
+    /// Its place in a list: later blocks pulse a little later.
+    pub fn order(mut self, order: usize) -> Self {
+        self.order = order;
+        self
+    }
+}
+
+impl RenderOnce for Skeleton {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // 30 fps is plenty for a slow pulse; with reduced motion the clock stays at 0.
+        let t = motion::continuous_at(30., window, cx);
+        let phase = (t - self.order as f32 * SKELETON_STAGGER) / SKELETON_PERIOD * TAU;
+        let opacity = 0.7 + 0.3 * phase.cos();
+        div()
+            .flex_none()
+            .h(px(self.height))
+            .map(|block| match self.width {
+                Some(width) => block.w(px(width)),
+                None => block.w_full(),
+            })
+            .rounded(px(self.radius))
+            .bg(Theme::of(cx).surface_container_highest)
+            .opacity(opacity)
+    }
+}
+
+/// Skeleton song rows: a thumbnail and two lines of text each.
+pub fn skeleton_rows(count: usize) -> Div {
+    div().flex().flex_col().children((0..count).map(|index| {
+        // Varied line lengths read as text rather than as a grid of bars.
+        let title = 140. + (index * 53 % 120) as f32;
+        div()
+            .h(px(64.))
+            .px_4()
+            .flex()
+            .items_center()
+            .gap_4()
+            .child(skeleton(Some(40.), 40., 6.).order(index))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(skeleton(Some(title), 12., 6.).order(index))
+                    .child(skeleton(Some(title * 0.6), 10., 5.).order(index)),
+            )
+    }))
+}
+
+/// Skeleton cards for a wrapping grid of albums or artists. `round` for artist pictures.
+pub fn skeleton_cards(count: usize, round: bool) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .gap_2()
+        .children((0..count).map(|index| {
+            div()
+                .w(px(CARD_WIDTH + 24.))
+                .p_3()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    skeleton(
+                        Some(CARD_WIDTH),
+                        CARD_WIDTH,
+                        if round { CARD_WIDTH / 2. } else { 12. },
+                    )
+                    .order(index),
+                )
+                .child(
+                    div()
+                        .pt_1()
+                        .child(skeleton(Some(CARD_WIDTH * 0.8), 12., 6.).order(index)),
+                )
+                .child(skeleton(Some(CARD_WIDTH * 0.5), 10., 5.).order(index))
+        }))
 }

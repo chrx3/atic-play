@@ -3,16 +3,16 @@ use std::future::Future;
 use anyhow::Result;
 use gpui::{
     AnyElement, ClickEvent, Context, Div, Entity, SharedString, Stateful, Subscription, Window,
-    div, prelude::*, px,
+    div, prelude::*,
 };
-use gpui_m3::{ListItem, LoadingIndicator, Segment, SegmentedButtons, Theme};
+use gpui_m3::{ListItem, Segment, SegmentedButtons, Theme};
 use ytm_core::{Album, Artist, Client, Track};
 
 use crate::covers::Covers;
 use crate::playback::Playback;
 use crate::ui::{
     CARD_COVER_SIZE, CARD_WIDTH, avatar, compact_count, format_time, media_card, placeholder,
-    section_title, thumbnail,
+    section_title, skeleton_cards, skeleton_rows, thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -188,21 +188,21 @@ impl Render for SearchView {
                     let items = items.clone();
                     self.render_songs(&items, cx)
                 }
-                other => status(other, cx),
+                other => status(other, Tab::Songs, cx),
             },
             Tab::Albums => match &self.albums {
                 Load::Ready(items) if !items.is_empty() => {
                     let items = items.clone();
                     self.render_albums(&items, cx)
                 }
-                other => status(other, cx),
+                other => status(other, Tab::Albums, cx),
             },
             Tab::Artists => match &self.artists {
                 Load::Ready(items) if !items.is_empty() => {
                     let items = items.clone();
                     self.render_artists(&items, cx)
                 }
-                other => status(other, cx),
+                other => status(other, Tab::Artists, cx),
             },
         };
 
@@ -246,10 +246,18 @@ impl Render for SearchView {
     }
 }
 
-fn status<T>(load: &Load<T>, cx: &mut Context<SearchView>) -> AnyElement {
+/// What a tab shows while its results load, fail or come back empty.
+fn status<T>(load: &Load<T>, tab: Tab, cx: &mut Context<SearchView>) -> AnyElement {
     let s = *Theme::of(cx);
     let message = match load {
-        Load::Loading => LoadingIndicator::new().size(px(48.)).into_any_element(),
+        Load::Loading => {
+            return match tab {
+                Tab::Songs => skeleton_rows(8),
+                Tab::Albums => skeleton_cards(8, false),
+                Tab::Artists => skeleton_cards(8, true),
+            }
+            .into_any_element();
+        }
         Load::Failed(error) => div()
             .text_color(s.error)
             .child(format!("La búsqueda falló: {error}"))
