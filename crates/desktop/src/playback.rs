@@ -245,6 +245,40 @@ impl Playback {
         self.play_tracks(tracks, 0, cx);
     }
 
+    /// "Reproducir a continuación": the track plays after the current one.
+    #[expect(
+        dead_code,
+        reason = "used by the Sprint 3 UI on the sprint-3-ui branch"
+    )]
+    pub fn play_next(&mut self, track: Track, cx: &mut Context<Self>) {
+        let was_empty = self.current().is_none();
+        self.queue.insert_next(track);
+        self.queue_changed(was_empty, cx);
+    }
+
+    /// "Agregar a la cola": the track plays after everything already queued.
+    #[expect(
+        dead_code,
+        reason = "used by the Sprint 3 UI on the sprint-3-ui branch"
+    )]
+    pub fn add_to_queue(&mut self, track: Track, cx: &mut Context<Self>) {
+        let was_empty = self.current().is_none();
+        self.queue.append([track]);
+        self.queue_changed(was_empty, cx);
+    }
+
+    /// After adding to the queue: an empty queue starts playing, a running one refreshes the
+    /// download of whatever is next now.
+    fn queue_changed(&mut self, was_empty: bool, cx: &mut Context<Self>) {
+        self.settings_dirty = true;
+        if was_empty {
+            self.load_current(cx);
+        } else {
+            self.prefetch_next(cx);
+        }
+        cx.notify();
+    }
+
     pub fn play_index(&mut self, index: usize, cx: &mut Context<Self>) {
         if self.queue.jump_to(index).is_some() {
             self.load_current(cx);

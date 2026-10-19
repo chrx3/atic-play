@@ -6,7 +6,9 @@ mod lyrics;
 mod player;
 mod queue;
 
-pub use client::{Album, Artist, Client, HomeFeed, Library, Playlist, PlaylistPage, Track};
+pub use client::{
+    Album, AlbumPage, Artist, ArtistPage, Client, HomeFeed, Library, Playlist, PlaylistPage, Track,
+};
 pub use lyrics::{LyricLine, Lyrics, LyricsClient};
 pub use player::AudioPlayer;
 pub use queue::{Queue, RepeatMode};

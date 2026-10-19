@@ -107,6 +107,36 @@ impl Queue {
         }
     }
 
+    /// Puts a track right after the current one ("play next"). A track already queued later is
+    /// moved there instead of repeated.
+    pub fn insert_next(&mut self, track: Track) {
+        let Some(current) = self.current else {
+            self.append([track]);
+            return;
+        };
+        if self.tracks[current].id == track.id {
+            return;
+        }
+        if let Some(index) = self.tracks.iter().position(|queued| queued.id == track.id) {
+            self.tracks.remove(index);
+            if index < current {
+                self.current = Some(current - 1);
+            }
+        }
+        let at = self.current.map_or(0, |index| index + 1);
+        self.tracks.insert(at, track.clone());
+        if let Some(unshuffled) = &mut self.unshuffled {
+            // Keep the unshuffled order consistent: the track follows the current one there too.
+            unshuffled.retain(|queued| queued.id != track.id);
+            let current_id = &self.tracks[at - 1].id;
+            let after = unshuffled
+                .iter()
+                .position(|queued| &queued.id == current_id)
+                .map_or(unshuffled.len(), |index| index + 1);
+            unshuffled.insert(after, track);
+        }
+    }
+
     pub fn jump_to(&mut self, index: usize) -> Option<&Track> {
         if index < self.tracks.len() {
             self.current = Some(index);
@@ -200,6 +230,8 @@ mod tests {
             album: None,
             duration_secs: None,
             cover_url: None,
+            album_id: None,
+            artist_id: None,
         }
     }
 
@@ -277,6 +309,45 @@ mod tests {
         queue.set_shuffle(false);
         assert_eq!(ids(&queue), all);
         assert_eq!(current_id(&queue), Some(playing.as_str()));
+    }
+
+    #[test]
+    fn insert_next_goes_right_after_the_current_track() {
+        let mut queue = queue_of(&["a", "b", "c"], 0);
+        queue.insert_next(track("x"));
+        assert_eq!(ids(&queue), ["a", "x", "b", "c"]);
+        assert_eq!(current_id(&queue), Some("a"));
+    }
+
+    #[test]
+    fn insert_next_moves_a_queued_track_instead_of_repeating_it() {
+        let mut queue = queue_of(&["a", "b", "c", "d"], 1);
+        queue.insert_next(track("d"));
+        assert_eq!(ids(&queue), ["a", "b", "d", "c"]);
+        // Moving a track from before the current one keeps the current one playing.
+        queue.insert_next(track("a"));
+        assert_eq!(ids(&queue), ["b", "a", "d", "c"]);
+        assert_eq!(current_id(&queue), Some("b"));
+        // The current track itself is left alone.
+        queue.insert_next(track("b"));
+        assert_eq!(ids(&queue), ["b", "a", "d", "c"]);
+    }
+
+    #[test]
+    fn insert_next_survives_turning_shuffle_off() {
+        let mut queue = queue_of(&["a", "b", "c", "d", "e"], 0);
+        queue.set_shuffle(true);
+        queue.insert_next(track("x"));
+        assert_eq!(ids(&queue)[1], "x");
+        queue.set_shuffle(false);
+        assert_eq!(ids(&queue), ["a", "x", "b", "c", "d", "e"]);
+    }
+
+    #[test]
+    fn insert_next_into_an_empty_queue_starts_it() {
+        let mut queue = Queue::default();
+        queue.insert_next(track("x"));
+        assert_eq!(current_id(&queue), Some("x"));
     }
 
     #[test]

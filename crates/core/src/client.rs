@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use rustypipe::client::{RustyPipe, RustyPipeQuery};
+use rustypipe::client::{ClientType, RustyPipe, RustyPipeQuery};
 use rustypipe::model::{
     AlbumItem, ArtistId, ArtistItem, MusicPlaylistItem, Thumbnail, TrackItem, VideoItem,
 };
@@ -33,6 +33,11 @@ pub struct Track {
     pub album: Option<String>,
     pub duration_secs: Option<u32>,
     pub cover_url: Option<String>,
+    /// For "go to album" and "go to artist". Missing in queues saved by older versions.
+    #[serde(default)]
+    pub album_id: Option<String>,
+    #[serde(default)]
+    pub artist_id: Option<String>,
 }
 
 impl From<TrackItem> for Track {
@@ -41,7 +46,11 @@ impl From<TrackItem> for Track {
             id: item.id,
             title: item.name,
             artists: artist_names(&item.artists),
+            album_id: item.album.as_ref().map(|album| album.id.clone()),
             album: item.album.map(|album| album.name),
+            artist_id: item
+                .artist_id
+                .or_else(|| item.artists.iter().find_map(|artist| artist.id.clone())),
             duration_secs: item.duration,
             cover_url: largest(&item.cover),
         }
@@ -107,6 +116,21 @@ impl From<MusicPlaylistItem> for Playlist {
             cover_url: largest(&item.thumbnail),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct AlbumPage {
+    pub album: Album,
+    pub tracks: Vec<Track>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArtistPage {
+    pub artist: Artist,
+    pub description: Option<String>,
+    pub top_tracks: Vec<Track>,
+    pub albums: Vec<Album>,
+    pub similar: Vec<Artist>,
 }
 
 #[derive(Debug, Clone)]
@@ -188,6 +212,8 @@ impl From<VideoItem> for Track {
             album: None,
             duration_secs: video.duration,
             cover_url: largest(&video.thumbnail),
+            album_id: None,
+            artist_id: None,
         }
     }
 }
@@ -420,23 +446,40 @@ impl Client {
         &self,
         album_id: String,
     ) -> impl Future<Output = Result<Vec<Track>>> + use<> {
+        let album = self.album(album_id);
+        async move { Ok(album.await?.tracks) }
+    }
+
+    /// An album's header and tracks.
+    pub fn album(&self, album_id: String) -> impl Future<Output = Result<AlbumPage>> + use<> {
         let pipe = self.pipe.clone();
         self.spawn(async move {
             let album = pipe.query().music_album(&album_id).await?;
             // Album pages list tracks without covers; they all share the album's.
             let cover_url = largest(&album.cover);
-            Ok(album
+            let tracks = album
                 .tracks
                 .into_iter()
                 .map(|item| {
                     let mut track = Track::from(item);
                     track.album.get_or_insert_with(|| album.name.clone());
+                    track.album_id.get_or_insert_with(|| album.id.clone());
                     if track.cover_url.is_none() {
                         track.cover_url = cover_url.clone();
                     }
                     track
                 })
-                .collect())
+                .collect();
+            Ok(AlbumPage {
+                album: Album {
+                    id: album.id,
+                    title: album.name,
+                    artists: artist_names(&album.artists),
+                    year: album.year,
+                    cover_url,
+                },
+                tracks,
+            })
         })
     }
 
@@ -444,10 +487,70 @@ impl Client {
         &self,
         artist_id: String,
     ) -> impl Future<Output = Result<Vec<Track>>> + use<> {
+        let artist = self.artist(artist_id);
+        async move { Ok(artist.await?.top_tracks) }
+    }
+
+    /// An artist's page: top songs, albums and singles, and similar artists.
+    pub fn artist(&self, artist_id: String) -> impl Future<Output = Result<ArtistPage>> + use<> {
         let pipe = self.pipe.clone();
         self.spawn(async move {
             let artist = pipe.query().music_artist(&artist_id, false).await?;
-            Ok(artist.tracks.into_iter().map(Track::from).collect())
+            Ok(ArtistPage {
+                artist: Artist {
+                    id: artist.id,
+                    name: artist.name,
+                    subscribers: artist.subscriber_count,
+                    avatar_url: largest(&artist.header_image),
+                },
+                description: artist.description,
+                top_tracks: artist.tracks.into_iter().map(Track::from).collect(),
+                albums: artist.albums.into_iter().map(Album::from).collect(),
+                similar: artist
+                    .similar_artists
+                    .into_iter()
+                    .map(Artist::from)
+                    .collect(),
+            })
+        })
+    }
+
+    /// What the signed-in user played recently, newest first and without repeats, for
+    /// "Escuchar de nuevo". Requires a session.
+    pub fn history(&self) -> impl Future<Output = Result<Vec<Track>>> + use<> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move {
+            let history = pipe.query().authenticated().music_history().await?;
+            let mut seen = std::collections::HashSet::new();
+            Ok(history
+                .items
+                .into_iter()
+                .map(|entry| Track::from(entry.item))
+                .filter(|track| seen.insert(track.id.clone()))
+                .collect())
+        })
+    }
+
+    /// Likes a track in the user's YouTube Music account, or takes the like back. Requires a
+    /// session.
+    pub fn set_liked(
+        &self,
+        track_id: String,
+        liked: bool,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move {
+            let endpoint = if liked {
+                "like/like"
+            } else {
+                "like/removelike"
+            };
+            let body = serde_json::json!({ "target": { "videoId": track_id } });
+            pipe.query()
+                .authenticated()
+                .raw(ClientType::DesktopMusic, endpoint, &body)
+                .await?;
+            Ok(())
         })
     }
 

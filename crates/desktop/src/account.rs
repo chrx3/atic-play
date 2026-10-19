@@ -4,7 +4,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use gpui::{Context, SharedString};
-use ytm_core::{Client, Library};
+use ytm_core::{Client, Library, Track};
 
 use crate::google_sign_in;
 
@@ -115,6 +115,61 @@ impl Account {
 
     pub fn error(&self) -> Option<&SharedString> {
         self.error.as_ref()
+    }
+
+    /// Whether the track is in the user's liked songs, as far as the loaded library knows (its
+    /// first page, plus likes given in this session).
+    #[expect(
+        dead_code,
+        reason = "used by the Sprint 3 UI on the sprint-3-ui branch"
+    )]
+    pub fn is_liked(&self, track_id: &str) -> bool {
+        self.library
+            .as_ref()
+            .is_some_and(|library| library.liked.iter().any(|track| track.id == track_id))
+    }
+
+    /// Likes the track in YouTube Music, or takes the like back. The library changes at once and
+    /// is put back if YouTube refuses.
+    #[expect(
+        dead_code,
+        reason = "used by the Sprint 3 UI on the sprint-3-ui branch"
+    )]
+    pub fn toggle_like(&mut self, track: Track, cx: &mut Context<Self>) {
+        if !self.is_signed_in() {
+            return;
+        }
+        let Some(library) = self.library.as_mut() else {
+            return;
+        };
+        let liked = !library.liked.iter().any(|liked| liked.id == track.id);
+        if liked {
+            library.liked.insert(0, track.clone());
+        } else {
+            library.liked.retain(|liked| liked.id != track.id);
+        }
+        cx.notify();
+
+        let request = self.client.set_liked(track.id.clone(), liked);
+        cx.spawn(async move |this, cx| {
+            let Err(err) = request.await else {
+                return;
+            };
+            log::warn!("like {}: {err:#}", track.id);
+            this.update(cx, |this, cx| {
+                if let Some(library) = &mut this.library {
+                    if liked {
+                        library.liked.retain(|liked| liked.id != track.id);
+                    } else {
+                        library.liked.insert(0, track);
+                    }
+                }
+                this.error = Some(format!("No se pudo guardar el me gusta: {err:#}").into());
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Opens the Google sign-in window and signs in with the session it returns.
