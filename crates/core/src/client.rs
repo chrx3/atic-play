@@ -5,11 +5,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use serde::{Deserialize, Serialize};
 use rustypipe::client::{RustyPipe, RustyPipeQuery};
 use rustypipe::model::{
     AlbumItem, ArtistId, ArtistItem, MusicPlaylistItem, Thumbnail, TrackItem, VideoItem,
 };
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::runtime::Runtime;
 

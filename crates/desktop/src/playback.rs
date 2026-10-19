@@ -1,10 +1,13 @@
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{Context, Hsla, SharedString, Task, rgb};
+use gpui::{Context, Hsla, SharedString, Subscription, Task, rgb};
 use material_colors::image::{FilterType, ImageReader};
 use ytm_core::{AudioPlayer, Client, Queue, RepeatMode, Track};
+
+use crate::media_session::{MediaEvent, MediaSession, MediaState, SeekDirection};
+use crate::settings;
 
 const COVER_SIZE: u32 = 544;
 /// How often the progress follows the playback position and track ends are noticed.
@@ -13,6 +16,12 @@ const TICK: Duration = Duration::from_millis(250);
 const RESTART_THRESHOLD: Duration = Duration::from_secs(3);
 /// Fetch the radio when fewer tracks than this are left, so playback never runs dry.
 const RADIO_REFILL_AT: usize = 3;
+/// How often (in ticks) the system media session hears the position while playing.
+const MEDIA_SYNC_TICKS: u32 = 8;
+/// What a media key "seek" without an amount moves.
+const MEDIA_SEEK_STEP: Duration = Duration::from_secs(10);
+
+type AudioTask = Task<anyhow::Result<Vec<u8>>>;
 
 /// What is playing and what comes next. Views observe it.
 pub struct Playback {
@@ -29,12 +38,26 @@ pub struct Playback {
     ended: bool,
     /// The track whose radio was last requested, so it is requested once.
     radio_for: Option<String>,
+    /// The next track, downloading while the current one plays so skipping to it is instant.
+    prefetch: Option<(String, AudioTask)>,
     seed: Option<Hsla>,
+    /// The current track's cover, for the system media session.
+    cover: Option<PathBuf>,
     opening: Option<String>,
     volume: f32,
     muted: bool,
+    /// Where to start the restored track the first time it plays.
+    resume_at: Option<Duration>,
     error: Option<SharedString>,
+    media: Option<MediaSession>,
+    media_tried: bool,
+    /// The track and state the media session last heard, to only send changes.
+    media_sent: Option<(String, bool)>,
+    ticks: u32,
+    /// Settings changed since they were last written; written on the next tick.
+    settings_dirty: bool,
     _ticker: Task<()>,
+    _quit: Subscription,
 }
 
 impl Playback {
@@ -54,22 +77,46 @@ impl Playback {
                 }
             }
         });
-        Playback {
+        let quit = cx.on_app_quit(|this, cx| {
+            this.save_settings(cx);
+            async {}
+        });
+
+        // Pick up where the last session left off, paused.
+        let saved = settings::get(cx);
+        let mut queue = Queue::default();
+        queue.restore(saved.queue.clone(), saved.queue_index, saved.shuffle);
+        queue.set_repeat(saved.repeat);
+        let resume_at =
+            (saved.position_secs > 1.).then(|| Duration::from_secs_f32(saved.position_secs));
+
+        let playback = Playback {
             client,
             player,
-            queue: Queue::default(),
+            queue,
             loading: false,
             generation: 0,
             started: false,
             ended: false,
             radio_for: None,
+            prefetch: None,
             seed: None,
+            cover: None,
             opening: None,
-            volume: 1.,
-            muted: false,
+            volume: saved.volume.unwrap_or(1.),
+            muted: saved.muted,
+            resume_at,
             error,
+            media: None,
+            media_tried: false,
+            media_sent: None,
+            ticks: 0,
+            settings_dirty: false,
             _ticker: ticker,
-        }
+            _quit: quit,
+        };
+        playback.apply_volume();
+        playback
     }
 
     pub fn queue(&self) -> &Queue {
@@ -95,7 +142,8 @@ impl Playback {
     pub fn position(&self) -> Duration {
         match &self.player {
             Some(player) if self.started => player.position(),
-            _ => Duration::ZERO,
+            // A restored track shows where it will resume.
+            _ => self.resume_at.unwrap_or_default(),
         }
     }
 
@@ -218,9 +266,10 @@ impl Playback {
         };
         if self.started {
             player.toggle_pause();
+            self.sync_media(true);
             cx.notify();
         } else if !self.loading && self.current().is_some() {
-            // The queue ended: play the last track again.
+            // Restored from the last session, or the queue ended: play the current track.
             self.load_current(cx);
         }
     }
@@ -236,6 +285,7 @@ impl Playback {
             && self.started
         {
             player.seek(position);
+            self.sync_media(true);
             cx.notify();
         }
     }
@@ -244,23 +294,29 @@ impl Playback {
         self.volume = volume.clamp(0., 1.);
         self.muted = false;
         self.apply_volume();
+        self.settings_dirty = true;
         cx.notify();
     }
 
     pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
         self.muted = !self.muted;
         self.apply_volume();
+        self.settings_dirty = true;
         cx.notify();
     }
 
     pub fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
         self.queue.set_shuffle(!self.queue.shuffle());
+        self.settings_dirty = true;
+        self.prefetch_next(cx);
         cx.notify();
     }
 
     pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
         self.queue.cycle_repeat();
+        self.settings_dirty = true;
         self.refill_radio(cx);
+        self.prefetch_next(cx);
         cx.notify();
     }
 
@@ -271,6 +327,10 @@ impl Playback {
     }
 
     fn tick(&mut self, cx: &mut Context<Self>) {
+        self.ticks = self.ticks.wrapping_add(1);
+        self.connect_media(cx);
+        self.handle_media_events(cx);
+
         let finished = self.started && self.player.as_ref().is_some_and(AudioPlayer::is_idle);
         if finished {
             self.started = false;
@@ -278,10 +338,16 @@ impl Playback {
                 self.load_current(cx);
             } else {
                 self.ended = true;
+                self.sync_media(true);
             }
             cx.notify();
         } else if self.is_playing() {
+            self.sync_media(self.ticks.is_multiple_of(MEDIA_SYNC_TICKS));
             cx.notify();
+        }
+
+        if self.settings_dirty {
+            self.save_settings(cx);
         }
     }
 
@@ -299,9 +365,17 @@ impl Playback {
         self.ended = false;
         self.loading = true;
         self.error = None;
+        self.settings_dirty = true;
         cx.notify();
 
-        let audio = self.client.fetch_audio(track.id.clone());
+        // The prefetched download is used when it is for this track; any other is dropped
+        // (it still finishes in the background and lands in the disk cache).
+        let audio = match self.prefetch.take() {
+            Some((id, task)) if id == track.id => task,
+            _ => cx
+                .background_executor()
+                .spawn(self.client.fetch_audio(track.id.clone())),
+        };
         let cover = track
             .cover_url
             .clone()
@@ -312,7 +386,7 @@ impl Playback {
                 Some(cover) => cover.await.ok(),
                 None => None,
             };
-            let seed = match cover {
+            let seed = match cover.clone() {
                 Some(path) => {
                     cx.background_executor()
                         .spawn(async move { seed_color(&path) })
@@ -334,10 +408,16 @@ impl Playback {
                     Ok(()) => {
                         this.started = true;
                         this.apply_volume();
+                        if let (Some(at), Some(player)) = (this.resume_at.take(), &this.player) {
+                            player.seek(at);
+                        }
                         if seed.is_some() {
                             this.seed = seed;
                         }
+                        this.cover = cover;
+                        this.sync_media(true);
                         this.refill_radio(cx);
+                        this.prefetch_next(cx);
                     }
                     Err(err) => {
                         this.error = Some(format!("No se pudo reproducir: {err:#}").into());
@@ -348,6 +428,29 @@ impl Playback {
             .ok();
         })
         .detach();
+    }
+
+    /// Starts downloading the track that plays after the current one.
+    fn prefetch_next(&mut self, cx: &mut Context<Self>) {
+        let next = match self.queue.repeat() {
+            RepeatMode::One => None,
+            RepeatMode::Off => self.queue.upcoming().first(),
+            RepeatMode::All => self
+                .queue
+                .upcoming()
+                .first()
+                .or_else(|| self.queue.tracks().first()),
+        };
+        let Some(next) = next.map(|track| track.id.clone()) else {
+            return;
+        };
+        if self.current().is_some_and(|track| track.id == next)
+            || self.prefetch.as_ref().is_some_and(|(id, _)| *id == next)
+        {
+            return;
+        }
+        let fetch = self.client.fetch_audio(next.clone());
+        self.prefetch = Some((next, cx.background_executor().spawn(fetch)));
     }
 
     /// Keeps the queue going with the radio of the current track, as YouTube Music does.
@@ -369,8 +472,11 @@ impl Playback {
             Ok(tracks) => {
                 this.update(cx, |this, cx| {
                     this.queue.append(tracks);
+                    this.settings_dirty = true;
                     if this.ended && this.queue.advance(false).is_some() {
                         this.load_current(cx);
+                    } else {
+                        this.prefetch_next(cx);
                     }
                     cx.notify();
                 })
@@ -379,6 +485,102 @@ impl Playback {
             Err(err) => log::warn!("radio for {track_id}: {err:#}"),
         })
         .detach();
+    }
+
+    /// Registers with the system media session once the main window exists.
+    fn connect_media(&mut self, cx: &mut Context<Self>) {
+        if self.media_tried {
+            return;
+        }
+        let Some(window) = cx.windows().into_iter().next() else {
+            return;
+        };
+        self.media_tried = true;
+        self.media = window
+            .update(cx, |_, window, _| MediaSession::new(window))
+            .ok()
+            .flatten();
+        self.media_sent = None;
+        self.sync_media(true);
+    }
+
+    fn handle_media_events(&mut self, cx: &mut Context<Self>) {
+        let Some(media) = &self.media else {
+            return;
+        };
+        for event in media.poll() {
+            match event {
+                MediaEvent::Play if !self.is_playing() => self.toggle_pause(cx),
+                MediaEvent::Pause | MediaEvent::Stop if self.is_playing() => self.toggle_pause(cx),
+                MediaEvent::Toggle => self.toggle_pause(cx),
+                MediaEvent::Next => self.next(cx),
+                MediaEvent::Previous => self.previous(cx),
+                MediaEvent::SetPosition(position) => self.seek(position.0, cx),
+                MediaEvent::Seek(direction) => self.seek_by(direction, MEDIA_SEEK_STEP, cx),
+                MediaEvent::SeekBy(direction, amount) => self.seek_by(direction, amount, cx),
+                MediaEvent::Raise => cx.activate(true),
+                _ => {}
+            }
+        }
+    }
+
+    fn seek_by(&mut self, direction: SeekDirection, amount: Duration, cx: &mut Context<Self>) {
+        let position = match direction {
+            SeekDirection::Forward => self.position() + amount,
+            SeekDirection::Backward => self.position().saturating_sub(amount),
+        };
+        self.seek(position, cx);
+    }
+
+    /// Tells the system media session what is playing. Without `force`, only changes are sent.
+    fn sync_media(&mut self, force: bool) {
+        let state = match self.current() {
+            Some(track) if self.started => Some((track.id.clone(), self.is_playing())),
+            _ => None,
+        };
+        if !force && state == self.media_sent {
+            return;
+        }
+        let Some(media) = &mut self.media else {
+            return;
+        };
+        match (&state, self.queue.current()) {
+            (Some((id, playing)), Some(track)) => {
+                if self.media_sent.as_ref().map(|(sent, _)| sent) != Some(id) {
+                    media.set_track(track, self.cover.as_deref());
+                }
+                let position = self
+                    .player
+                    .as_ref()
+                    .map(AudioPlayer::position)
+                    .unwrap_or_default();
+                media.set_state(if *playing {
+                    MediaState::Playing(position)
+                } else {
+                    MediaState::Paused(position)
+                });
+            }
+            _ => media.set_state(MediaState::Stopped),
+        }
+        self.media_sent = state;
+    }
+
+    fn save_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings_dirty = false;
+        let position = self.position().as_secs_f32();
+        let queue = self.queue.tracks().to_vec();
+        let queue_index = self.queue.current_index();
+        let (volume, muted) = (self.volume, self.muted);
+        let (shuffle, repeat) = (self.queue.shuffle(), self.queue.repeat());
+        settings::update(cx, |settings| {
+            settings.volume = Some(volume);
+            settings.muted = muted;
+            settings.shuffle = shuffle;
+            settings.repeat = repeat;
+            settings.queue = queue;
+            settings.queue_index = queue_index;
+            settings.position_secs = position;
+        });
     }
 }
 
