@@ -21,6 +21,7 @@ use crate::player_bar::{PlayerBar, PlayerBarEvent};
 use crate::playlist_view::PlaylistView;
 use crate::queue_panel::QueuePanel;
 use crate::search_view::SearchView;
+use crate::settings;
 use crate::sidebar::{Route, Sidebar};
 use crate::sign_in::SignInDialog;
 use crate::ui::placeholder;
@@ -106,6 +107,7 @@ impl YtmApp {
                         let open = this.queue_open;
                         this.player_bar
                             .update(cx, |bar, cx| bar.set_queue_open(open, cx));
+                        settings::update(cx, |settings| settings.queue_open = Some(open));
                         cx.notify();
                     }
                     PlayerBarEvent::ToggleNowPlaying => {
@@ -149,6 +151,15 @@ impl YtmApp {
             }),
         ];
 
+        // The theme and the side panel as they were left.
+        let saved = settings::get(cx);
+        let dark = saved.dark.unwrap_or(true);
+        let queue_open = saved.queue_open.unwrap_or(true);
+        if !dark {
+            Theme::set(dark, None, cx);
+        }
+        player_bar.update(cx, |bar, cx| bar.set_queue_open(queue_open, cx));
+
         YtmApp {
             route: Route::Home,
             open_playlist: None,
@@ -162,12 +173,12 @@ impl YtmApp {
             lyrics_panel,
             now_playing_view,
             player_bar,
-            queue_open: true,
+            queue_open,
             side_panel: SidePanel::Queue,
             now_playing_open: false,
             page_generation: 0,
             sign_in_open: false,
-            dark: true,
+            dark,
             applied_seed: None,
             _subscriptions: subscriptions,
         }
@@ -209,6 +220,8 @@ impl YtmApp {
     fn toggle_dark(&mut self, cx: &mut Context<Self>) {
         self.dark = !self.dark;
         Theme::set(self.dark, self.applied_seed, cx);
+        let dark = self.dark;
+        settings::update(cx, |settings| settings.dark = Some(dark));
         cx.notify();
     }
 

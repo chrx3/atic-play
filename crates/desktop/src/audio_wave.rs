@@ -15,6 +15,11 @@ const WAVELENGTH: f32 = 20.;
 /// Amplitude in silence (or paused) and at full level.
 const QUIET_AMPLITUDE: f32 = 1.;
 const LOUD_AMPLITUDE: f32 = 6.;
+/// Wavelengths per second the wave drifts in silence; loud music adds up to `LOUD_SPEEDUP` more.
+const DRIFT_SPEED: f32 = 0.35;
+const LOUD_SPEEDUP: f32 = 0.5;
+/// How fast the loudness ripple travels along the wave (radians per second).
+const RIPPLE_SPEED: f32 = 0.6;
 
 /// Like gpui-m3's `WavyProgress`, but the wave's height follows `level` (0..1) with a fast
 /// spring, and loud passages ripple along it.
@@ -46,9 +51,11 @@ impl RenderOnce for AudioWave {
             window,
             cx,
         );
+        // A slow, bounce-free spring: the level changes ~30 times a second, and following it
+        // closely makes the wave twitch.
         let level = animate_f32(
             key(&self.id, "level"),
-            Spring::SPATIAL_FAST,
+            Spring::EFFECTS_SLOW,
             self.level.clamp(0., 1.),
             window,
             cx,
@@ -86,14 +93,14 @@ impl RenderOnce for AudioWave {
                     let base = QUIET_AMPLITUDE + (LOUD_AMPLITUDE - QUIET_AMPLITUDE) * level;
                     // Short waves fit a smaller swing, as in gpui-m3.
                     let amplitude = base.min(end / 6.);
-                    // Louder music also moves faster.
-                    let phase = t * WAVELENGTH * (1. + level);
+                    // Louder music also drifts a little faster.
+                    let phase = t * WAVELENGTH * DRIFT_SPEED * (1. + LOUD_SPEEDUP * level);
                     let steps = (end / 1.5).ceil().max(2.) as usize;
                     let points: Vec<Point<Pixels>> = (0..=steps)
                         .map(|i| {
                             let x = end * i as f32 / steps as f32;
                             // A slow ripple of ±30 % travels along the wave when it is loud.
-                            let ripple = 1. + 0.3 * level * (x / 90. - t * 1.7).sin();
+                            let ripple = 1. + 0.3 * level * (x / 90. - t * RIPPLE_SPEED).sin();
                             let y =
                                 cy - amplitude * ripple * ((x + phase) / WAVELENGTH * TAU).sin();
                             point(px(x0 + x), px(y))
