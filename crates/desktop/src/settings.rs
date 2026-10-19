@@ -20,6 +20,10 @@ pub struct Settings {
     pub window: Option<SavedBounds>,
     pub dark: Option<bool>,
     pub queue_open: Option<bool>,
+    /// Even out the volume between tracks (on unless set to false).
+    pub normalize: Option<bool>,
+    /// How many seconds tracks overlap at a change; 0 (the default) is gapless.
+    pub crossfade_secs: f32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

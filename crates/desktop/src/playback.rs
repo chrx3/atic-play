@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use gpui::{Context, Hsla, SharedString, Subscription, Task, rgb};
 use material_colors::image::{Image, ImageReader};
-use ytm_core::{AudioPlayer, Client, Queue, RepeatMode, Track};
+use ytm_core::{Audio, AudioPlayer, Client, Queue, RepeatMode, Track};
 
 use crate::media_session::{MediaEvent, MediaSession, MediaState, SeekDirection};
 use crate::settings;
@@ -20,8 +20,9 @@ const RADIO_REFILL_AT: usize = 3;
 const MEDIA_SYNC_TICKS: u32 = 8;
 /// What a media key "seek" without an amount moves.
 const MEDIA_SEEK_STEP: Duration = Duration::from_secs(10);
-
-type AudioTask = Task<anyhow::Result<Vec<u8>>>;
+/// Without crossfade, the next track is queued behind the current one this long before the end,
+/// so it follows without a gap. Ample against tick timing and duration rounding.
+const GAPLESS_LEAD: Duration = Duration::from_secs(2);
 
 /// What is playing and what comes next. Views observe it.
 pub struct Playback {
@@ -38,8 +39,16 @@ pub struct Playback {
     ended: bool,
     /// The track whose radio was last requested, so it is requested once.
     radio_for: Option<String>,
-    /// The next track, downloading while the current one plays so skipping to it is instant.
-    prefetch: Option<(String, AudioTask)>,
+    /// The next track while it downloads, so skipping to it (or reaching it) is instant.
+    prefetching: Option<(String, Task<()>)>,
+    /// The next track once downloaded; it is also prepared in the player for a seamless
+    /// transition.
+    prefetched: Option<(String, Audio)>,
+    /// The user skipped to the track still prefetching: play it as soon as it arrives.
+    play_when_prefetched: bool,
+    /// The next track is queued in the player behind the current one (gapless) and has not
+    /// taken over yet.
+    gapless_pending: bool,
     seed: Option<Hsla>,
     /// The current track's cover, for the system media session.
     cover: Option<PathBuf>,
@@ -99,7 +108,10 @@ impl Playback {
             started: false,
             ended: false,
             radio_for: None,
-            prefetch: None,
+            prefetching: None,
+            prefetched: None,
+            play_when_prefetched: false,
+            gapless_pending: false,
             seed: None,
             cover: None,
             opening: None,
@@ -373,6 +385,7 @@ impl Playback {
         self.ticks = self.ticks.wrapping_add(1);
         self.connect_media(cx);
         self.handle_media_events(cx);
+        self.advance_if_due(cx);
 
         let finished = self.started && self.player.as_ref().is_some_and(AudioPlayer::is_idle);
         if finished {
@@ -394,11 +407,82 @@ impl Playback {
         }
     }
 
+    /// Moves on to the prepared next track without a gap: queues it behind the current one near
+    /// the end, or crossfades into it, depending on the setting.
+    fn advance_if_due(&mut self, cx: &mut Context<Self>) {
+        let crossfade = crossfade(cx);
+        let next_id = self.next_id();
+        let duration = self.duration();
+        let position = self.position();
+        let playing = self.is_playing();
+        let Some(player) = &mut self.player else {
+            return;
+        };
+        if player.poll_transition() {
+            self.gapless_pending = false;
+            self.advance_seamlessly(cx);
+            return;
+        }
+        let ready = self.started
+            && playing
+            && !self.gapless_pending
+            && player.has_next()
+            && self
+                .prefetched
+                .as_ref()
+                .is_some_and(|(id, _)| Some(id) == next_id.as_ref());
+        let Some(duration) = duration.filter(|_| ready) else {
+            return;
+        };
+        let lead = if crossfade.is_zero() {
+            GAPLESS_LEAD
+        } else {
+            crossfade
+        };
+        if duration.saturating_sub(position) > lead || !player.begin_transition(crossfade) {
+            return;
+        }
+        if crossfade.is_zero() {
+            self.gapless_pending = true;
+        } else {
+            self.advance_seamlessly(cx);
+        }
+    }
+
+    /// The queue catches up with a track the player already started from `prefetched`.
+    fn advance_seamlessly(&mut self, cx: &mut Context<Self>) {
+        let Some((id, _)) = self.prefetched.take() else {
+            return;
+        };
+        if self.next_id().as_ref() == Some(&id) {
+            self.queue.advance(false);
+        } else if let Some(index) = self.queue.tracks().iter().position(|track| track.id == id) {
+            self.queue.jump_to(index);
+        }
+        self.generation += 1;
+        self.started = true;
+        self.ended = false;
+        self.loading = false;
+        self.error = None;
+        self.resume_at = None;
+        self.settings_dirty = true;
+        // The new track's metadata must reach the media session even before its cover does.
+        self.cover = None;
+        self.media_sent = None;
+        if let Some(track) = self.current().cloned() {
+            self.load_cover(&track, self.generation, cx);
+        }
+        self.sync_media(true);
+        self.refill_radio(cx);
+        self.prefetch_next(cx);
+        cx.notify();
+    }
+
     fn load_current(&mut self, cx: &mut Context<Self>) {
         let Some(track) = self.current().cloned() else {
             return;
         };
-        let Some(player) = &self.player else {
+        let Some(player) = &mut self.player else {
             return;
         };
         player.stop();
@@ -408,64 +492,97 @@ impl Playback {
         self.ended = false;
         self.loading = true;
         self.error = None;
+        self.gapless_pending = false;
+        self.play_when_prefetched = false;
         self.settings_dirty = true;
+        self.load_cover(&track, generation, cx);
         cx.notify();
 
-        // The prefetched download is used when it is for this track; any other is dropped
-        // (it still finishes in the background and lands in the disk cache).
-        let audio = match self.prefetch.take() {
-            Some((id, task)) if id == track.id => task,
-            _ => cx
-                .background_executor()
-                .spawn(self.client.fetch_audio(track.id.clone())),
-        };
-        let cover = track
-            .cover_url
-            .clone()
-            .map(|url| self.client.fetch_cover(track.id.clone(), url, COVER_SIZE));
+        // A download made ahead for this track is used as is; one still in flight plays when it
+        // lands. Any other is dropped (it still finishes in the background, into the disk cache).
+        if let Some((_, audio)) = self.prefetched.take_if(|(id, _)| *id == track.id) {
+            self.start_audio(generation, Ok(audio), cx);
+            return;
+        }
+        self.prefetched = None;
+        if self
+            .prefetching
+            .as_ref()
+            .is_some_and(|(id, _)| *id == track.id)
+        {
+            self.play_when_prefetched = true;
+            return;
+        }
+        self.prefetching = None;
+        let audio = self.client.fetch_audio(track.id.clone());
         cx.spawn(async move |this, cx| {
             let audio = audio.await;
-            let cover = match cover {
-                Some(cover) => cover.await.ok(),
-                None => None,
-            };
-            let seed = match cover.clone() {
-                Some(path) => {
-                    cx.background_executor()
-                        .spawn(async move { seed_color(&path) })
-                        .await
-                }
-                None => None,
-            };
+            this.update(cx, |this, cx| this.start_audio(generation, audio, cx))
+                .ok();
+        })
+        .detach();
+    }
 
+    /// Plays a downloaded track, unless something newer was chosen meanwhile.
+    fn start_audio(
+        &mut self,
+        generation: u64,
+        audio: anyhow::Result<Audio>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.generation != generation {
+            return;
+        }
+        self.loading = false;
+        let gain = audio.as_ref().map_or(1., |audio| self.gain(audio, cx));
+        let started = audio.and_then(|audio| match &mut self.player {
+            Some(player) => player.play(audio.bytes, gain),
+            None => Ok(()),
+        });
+        match started {
+            Ok(()) => {
+                self.started = true;
+                self.apply_volume();
+                if let (Some(at), Some(player)) = (self.resume_at.take(), &self.player) {
+                    player.seek(at);
+                }
+                self.sync_media(true);
+                self.refill_radio(cx);
+                self.prefetch_next(cx);
+            }
+            Err(err) => {
+                self.error = Some(format!("No se pudo reproducir: {err:#}").into());
+            }
+        }
+        cx.notify();
+    }
+
+    /// Fetches the track's cover, then its theme seed, and shows both when they arrive.
+    fn load_cover(&mut self, track: &Track, generation: u64, cx: &mut Context<Self>) {
+        let Some(url) = track.cover_url.clone() else {
+            return;
+        };
+        let cover = self.client.fetch_cover(track.id.clone(), url, COVER_SIZE);
+        cx.spawn(async move |this, cx| {
+            let Ok(path) = cover.await else {
+                return;
+            };
+            let seed_path = path.clone();
+            let seed = cx
+                .background_executor()
+                .spawn(async move { seed_color(&seed_path) })
+                .await;
             this.update(cx, |this, cx| {
                 if this.generation != generation {
                     return;
                 }
-                this.loading = false;
-                let started = audio.and_then(|bytes| match &this.player {
-                    Some(player) => player.play(bytes),
-                    None => Ok(()),
-                });
-                match started {
-                    Ok(()) => {
-                        this.started = true;
-                        this.apply_volume();
-                        if let (Some(at), Some(player)) = (this.resume_at.take(), &this.player) {
-                            player.seek(at);
-                        }
-                        if seed.is_some() {
-                            this.seed = seed;
-                        }
-                        this.cover = cover;
-                        this.sync_media(true);
-                        this.refill_radio(cx);
-                        this.prefetch_next(cx);
-                    }
-                    Err(err) => {
-                        this.error = Some(format!("No se pudo reproducir: {err:#}").into());
-                    }
+                if seed.is_some() {
+                    this.seed = seed;
                 }
+                this.cover = Some(path);
+                // Send the metadata again, now with the cover.
+                this.media_sent = None;
+                this.sync_media(true);
                 cx.notify();
             })
             .ok();
@@ -473,8 +590,8 @@ impl Playback {
         .detach();
     }
 
-    /// Starts downloading the track that plays after the current one.
-    fn prefetch_next(&mut self, cx: &mut Context<Self>) {
+    /// The track that plays after the current one, if any.
+    fn next_id(&self) -> Option<String> {
         let next = match self.queue.repeat() {
             RepeatMode::One => None,
             RepeatMode::Off => self.queue.upcoming().first(),
@@ -484,16 +601,83 @@ impl Playback {
                 .first()
                 .or_else(|| self.queue.tracks().first()),
         };
-        let Some(next) = next.map(|track| track.id.clone()) else {
+        next.map(|track| track.id.clone())
+            .filter(|id| self.current().is_none_or(|current| current.id != *id))
+    }
+
+    /// Downloads the track that plays after the current one and prepares it in the player.
+    fn prefetch_next(&mut self, cx: &mut Context<Self>) {
+        // A gapless transition already queued in the player cannot be taken back.
+        if self.gapless_pending {
+            return;
+        }
+        let next = self.next_id();
+        let have = self
+            .prefetched
+            .as_ref()
+            .map(|(id, _)| id)
+            .or(self.prefetching.as_ref().map(|(id, _)| id));
+        if next.is_none() || have != next.as_ref() {
+            self.prefetched = None;
+            self.prefetching = None;
+            if let Some(player) = &mut self.player {
+                player.clear_next();
+            }
+        }
+        let Some(next) = next else {
             return;
         };
-        if self.current().is_some_and(|track| track.id == next)
-            || self.prefetch.as_ref().is_some_and(|(id, _)| *id == next)
+        if self.prefetched.is_some() || self.prefetching.is_some() {
+            return;
+        }
+
+        let fetch = self.client.fetch_audio(next.clone());
+        let id = next.clone();
+        let task = cx.spawn(async move |this, cx| {
+            let audio = fetch.await;
+            this.update(cx, |this, cx| this.prefetch_done(id, audio, cx))
+                .ok();
+        });
+        self.prefetching = Some((next, task));
+    }
+
+    fn prefetch_done(&mut self, id: String, audio: anyhow::Result<Audio>, cx: &mut Context<Self>) {
+        if self
+            .prefetching
+            .as_ref()
+            .is_none_or(|(prefetching, _)| *prefetching != id)
         {
             return;
         }
-        let fetch = self.client.fetch_audio(next.clone());
-        self.prefetch = Some((next, cx.background_executor().spawn(fetch)));
+        // The task is running this very callback; dropping it here is fine.
+        self.prefetching = None;
+        if self.play_when_prefetched && self.current().is_some_and(|track| track.id == id) {
+            self.play_when_prefetched = false;
+            self.start_audio(self.generation, audio, cx);
+            return;
+        }
+        match audio {
+            Ok(audio) if self.next_id().as_ref() == Some(&id) => {
+                let gain = self.gain(&audio, cx);
+                if let Some(player) = &mut self.player
+                    && let Err(err) = player.prepare_next(audio.bytes.clone(), gain)
+                {
+                    log::warn!("could not prepare {id}: {err:#}");
+                }
+                self.prefetched = Some((id, audio));
+            }
+            Ok(_) => {}
+            Err(err) => log::warn!("prefetch of {id}: {err:#}"),
+        }
+    }
+
+    /// The volume factor a track plays at: its normalization gain, unless turned off.
+    fn gain(&self, audio: &Audio, cx: &Context<Self>) -> f32 {
+        if settings::get(cx).normalize.unwrap_or(true) {
+            audio.gain.unwrap_or(1.)
+        } else {
+            1.
+        }
     }
 
     /// Keeps the queue going with the radio of the current track, as YouTube Music does.
@@ -625,6 +809,11 @@ impl Playback {
             settings.position_secs = position;
         });
     }
+}
+
+/// How long tracks overlap when one ends and the next begins; zero means gapless.
+fn crossfade(cx: &gpui::App) -> Duration {
+    Duration::from_secs_f32(settings::get(cx).crossfade_secs.clamp(0., 12.))
 }
 
 /// The cover color best suited for a theme, as Material You picks it from a wallpaper.

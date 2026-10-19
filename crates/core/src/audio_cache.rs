@@ -6,6 +6,9 @@ use std::time::SystemTime;
 
 use anyhow::Result;
 
+/// Next to each `<id>.m4a`, its normalization gain as text, so it is measured once.
+const GAIN_EXTENSION: &str = "gain";
+
 pub(crate) struct AudioCache {
     dir: PathBuf,
     max_bytes: u64,
@@ -16,23 +19,32 @@ impl AudioCache {
         AudioCache { dir, max_bytes }
     }
 
-    /// The cached audio of a track, if any. Reading it marks it as recently used.
-    pub async fn read(&self, track_id: &str) -> Option<Vec<u8>> {
+    /// The cached audio of a track and its normalization gain, if any. Reading it marks it as
+    /// recently used.
+    pub async fn read(&self, track_id: &str) -> Option<(Vec<u8>, Option<f32>)> {
         let path = self.path(track_id)?;
         let bytes = tokio::fs::read(&path).await.ok()?;
         // The modification time doubles as "last played", which is what pruning goes by.
         if let Ok(file) = File::options().write(true).open(&path) {
             file.set_modified(SystemTime::now()).ok();
         }
-        Some(bytes)
+        let gain = tokio::fs::read_to_string(path.with_extension(GAIN_EXTENSION))
+            .await
+            .ok()
+            .and_then(|gain| gain.trim().parse().ok());
+        Some((bytes, gain))
     }
 
-    /// Stores a track, then drops the least recently played ones beyond the size limit.
-    pub async fn write(&self, track_id: &str, bytes: &[u8]) -> Result<()> {
+    /// Stores a track and its gain, then drops the least recently played ones beyond the size
+    /// limit.
+    pub async fn write(&self, track_id: &str, bytes: &[u8], gain: Option<f32>) -> Result<()> {
         let Some(path) = self.path(track_id) else {
             return Ok(());
         };
         tokio::fs::create_dir_all(&self.dir).await?;
+        if let Some(gain) = gain {
+            tokio::fs::write(path.with_extension(GAIN_EXTENSION), gain.to_string()).await?;
+        }
         // Write aside and rename, so a crash never leaves a truncated file to be played.
         let partial = path.with_extension("part");
         tokio::fs::write(&partial, bytes).await?;
@@ -71,6 +83,7 @@ fn prune(dir: &Path, max_bytes: u64) -> Result<()> {
             break;
         }
         if fs::remove_file(&path).is_ok() {
+            fs::remove_file(path.with_extension(GAIN_EXTENSION)).ok();
             total -= size;
         }
     }
@@ -114,11 +127,13 @@ mod tests {
                 .set_modified(now - Duration::from_secs(age_secs))
                 .unwrap();
         }
+        fs::write(dir.join("old.gain"), "1.2").unwrap();
         fs::write(dir.join("notes.txt"), [0u8; 100]).unwrap();
 
         prune(&dir, 20).unwrap();
 
         assert!(!dir.join("old.m4a").exists());
+        assert!(!dir.join("old.gain").exists());
         assert!(dir.join("middle.m4a").exists());
         assert!(dir.join("new.m4a").exists());
         // Only cached tracks count and get removed.

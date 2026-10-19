@@ -14,6 +14,7 @@ use tokio::process::Command;
 use tokio::runtime::Runtime;
 
 use crate::audio_cache::AudioCache;
+use crate::loudness::normalization_gain;
 
 /// YouTube serves full-length downloads slowly; ranged requests of this size are not throttled.
 const CHUNK_SIZE: u64 = 10 * 1024 * 1024;
@@ -116,6 +117,15 @@ impl From<MusicPlaylistItem> for Playlist {
             cover_url: largest(&item.thumbnail),
         }
     }
+}
+
+/// A downloaded track, ready to play.
+#[derive(Debug, Clone)]
+pub struct Audio {
+    /// The M4A/AAC file.
+    pub bytes: Vec<u8>,
+    /// The volume factor that normalizes it, if it could be measured.
+    pub gain: Option<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -601,28 +611,43 @@ impl Client {
         })
     }
 
-    /// Downloads the best M4A/AAC stream of a track.
-    pub fn fetch_audio(&self, track_id: String) -> impl Future<Output = Result<Vec<u8>>> + use<> {
+    /// Downloads the best M4A/AAC stream of a track, with its normalization gain.
+    pub fn fetch_audio(&self, track_id: String) -> impl Future<Output = Result<Audio>> + use<> {
         let http = self.http.clone();
         let yt_dlp = self.yt_dlp.clone();
         let cookies = self.is_signed_in().then(|| self.cookies_path.clone());
         let cache = self.audio_cache.clone();
         self.spawn(async move {
+            let cached = match &cache {
+                Some(cache) => cache.read(&track_id).await,
+                None => None,
+            };
+            let (bytes, gain, fresh) = match cached {
+                Some((bytes, gain)) => {
+                    log::info!("track {track_id}: from the audio cache");
+                    (bytes, gain, false)
+                }
+                None => {
+                    let stream = resolve_stream(&yt_dlp, cookies.as_deref(), &track_id).await?;
+                    log::info!("track {track_id}: itag {}", stream.format_id);
+                    (download(&http, &stream).await?, None, true)
+                }
+            };
+            // Measured once per track: new downloads and tracks cached before normalization.
+            let gain = match gain {
+                Some(gain) => Some(gain),
+                None => {
+                    let audio = bytes.clone();
+                    tokio::task::spawn_blocking(move || normalization_gain(&audio)).await?
+                }
+            };
             if let Some(cache) = &cache
-                && let Some(bytes) = cache.read(&track_id).await
-            {
-                log::info!("track {track_id}: from the audio cache");
-                return Ok(bytes);
-            }
-            let stream = resolve_stream(&yt_dlp, cookies.as_deref(), &track_id).await?;
-            log::info!("track {track_id}: itag {}", stream.format_id);
-            let bytes = download(&http, &stream).await?;
-            if let Some(cache) = &cache
-                && let Err(err) = cache.write(&track_id, &bytes).await
+                && (fresh || gain.is_some())
+                && let Err(err) = cache.write(&track_id, &bytes, gain).await
             {
                 log::warn!("could not cache {track_id}: {err:#}");
             }
-            Ok(bytes)
+            Ok(Audio { bytes, gain })
         })
     }
 

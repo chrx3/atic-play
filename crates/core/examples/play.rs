@@ -23,10 +23,14 @@ fn main() -> anyhow::Result<()> {
 
     println!("Downloading {}…", track.title);
     let audio = block_on(client.fetch_audio(track.id.clone()))?;
-    println!("{} KB, playing for 20 s", audio.len() / 1024);
+    println!(
+        "{} KB, gain {:?}, playing for 20 s",
+        audio.bytes.len() / 1024,
+        audio.gain
+    );
 
-    let player = AudioPlayer::new()?;
-    player.play(audio)?;
+    let mut player = AudioPlayer::new()?;
+    player.play(audio.bytes, audio.gain.unwrap_or(1.))?;
     std::thread::sleep(Duration::from_secs(20));
     Ok(())
 }
