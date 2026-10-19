@@ -25,6 +25,7 @@ use crate::playlist_view::PlaylistView;
 use crate::queue_panel::QueuePanel;
 use crate::search_view::SearchView;
 use crate::settings;
+use crate::settings_view::{SettingsEvent, SettingsView};
 use crate::sidebar::{Route, Sidebar};
 use crate::sign_in::SignInDialog;
 use crate::ui::placeholder;
@@ -58,6 +59,7 @@ pub struct YtmApp {
     playlist_view: Entity<PlaylistView>,
     album_view: Entity<AlbumView>,
     artist_view: Entity<ArtistView>,
+    settings_view: Entity<SettingsView>,
     queue_panel: Entity<QueuePanel>,
     lyrics_panel: Entity<LyricsPanel>,
     now_playing_view: Entity<NowPlayingView>,
@@ -134,6 +136,7 @@ impl YtmApp {
                 cx,
             )
         });
+        let settings_view = cx.new(|cx| SettingsView::new(client.clone(), account.clone(), cx));
         let queue_panel =
             cx.new(|cx| QueuePanel::new(playback.clone(), covers.clone(), navigation.clone(), cx));
         let lyrics_panel = cx.new(|cx| LyricsPanel::new(playback.clone(), cx));
@@ -211,6 +214,20 @@ impl YtmApp {
                     }
                 },
             ),
+            cx.subscribe(
+                &settings_view,
+                |this, _, event: &SettingsEvent, cx| match event {
+                    SettingsEvent::SetDark(dark) => {
+                        if *dark != this.dark {
+                            this.toggle_dark(cx);
+                        }
+                    }
+                    SettingsEvent::SignIn => {
+                        this.sign_in_open = true;
+                        cx.notify();
+                    }
+                },
+            ),
             // The song menu opens and closes.
             cx.observe(&navigation, |_, _, cx| cx.notify()),
             // The sidebar shows the session and the playlists; the dialog closes once signed in.
@@ -253,6 +270,7 @@ impl YtmApp {
             playlist_view,
             album_view,
             artist_view,
+            settings_view,
             queue_panel,
             lyrics_panel,
             now_playing_view,
@@ -273,6 +291,9 @@ impl YtmApp {
         // Album and artist pages replace each other under the same route: each is a new page.
         if route != self.route || matches!(route, Route::Album | Route::Artist) {
             self.page_generation += 1;
+        }
+        if route == Route::Settings && self.route != Route::Settings {
+            self.settings_view.update(cx, |view, cx| view.refresh(cx));
         }
         self.route = route;
         self.set_now_playing_open(false, cx);
@@ -327,6 +348,7 @@ impl YtmApp {
             Route::Playlist => Some(AnyView::from(self.playlist_view.clone())),
             Route::Album => Some(AnyView::from(self.album_view.clone())),
             Route::Artist => Some(AnyView::from(self.artist_view.clone())),
+            Route::Settings => Some(AnyView::from(self.settings_view.clone())),
         };
         let page = match view {
             // Cached: the player bar redraws the window every frame while the wave moves. Not
@@ -457,6 +479,14 @@ impl Render for YtmApp {
                         "Tema oscuro"
                     })
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_dark(cx))),
+            )
+            .child(
+                IconButton::new("settings", "gear")
+                    .selected(self.route == Route::Settings)
+                    .tooltip("Ajustes")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.navigate(Route::Settings, cx)
+                    })),
             );
 
         // The right panel grows and shrinks instead of popping in and out.

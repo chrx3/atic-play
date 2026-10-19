@@ -18,6 +18,7 @@ pub enum Route {
     Playlist,
     Album,
     Artist,
+    Settings,
 }
 
 type NavigateHandler = Rc<dyn Fn(Route, &mut Window, &mut App)>;
