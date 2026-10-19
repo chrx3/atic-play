@@ -1,9 +1,5 @@
 //! Offline downloads: playlists and albums the user keeps on disk to listen without a
 //! connection. The list lives in `downloads.json`; the audio, in the client's offline folder.
-#![expect(
-    dead_code,
-    reason = "the downloads UI comes from the settings-ui branch"
-)]
 
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
