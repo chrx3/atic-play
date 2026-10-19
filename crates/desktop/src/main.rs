@@ -62,10 +62,12 @@ fn local_dir(data_dir: &Path) -> PathBuf {
 
 fn main() -> ExitCode {
     // Our own crates log what they do (cached or downloaded, itag, errors); dependencies only
-    // warnings. `RUST_LOG` overrides it.
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("warn,atic_play=info,ytm_core=info"),
-    )
+    // warnings. rustypipe is off: it marks every request's tracing span at error level, which
+    // would read as a failure on each call, and its real errors reach our logs anyway.
+    // `RUST_LOG` overrides it.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
+        "warn,rustypipe=off,tracing::span=off,atic_play=info,ytm_core=info",
+    ))
     .init();
 
     let args: Vec<_> = std::env::args_os().collect();
