@@ -258,10 +258,6 @@ impl Playback {
     }
 
     /// "Reproducir a continuación": the track plays after the current one.
-    #[expect(
-        dead_code,
-        reason = "used by the Sprint 3 UI on the sprint-3-ui branch"
-    )]
     pub fn play_next(&mut self, track: Track, cx: &mut Context<Self>) {
         let was_empty = self.current().is_none();
         self.queue.insert_next(track);
@@ -269,10 +265,6 @@ impl Playback {
     }
 
     /// "Agregar a la cola": the track plays after everything already queued.
-    #[expect(
-        dead_code,
-        reason = "used by the Sprint 3 UI on the sprint-3-ui branch"
-    )]
     pub fn add_to_queue(&mut self, track: Track, cx: &mut Context<Self>) {
         let was_empty = self.current().is_none();
         self.queue.append([track]);

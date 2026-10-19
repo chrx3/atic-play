@@ -119,10 +119,6 @@ impl Account {
 
     /// Whether the track is in the user's liked songs, as far as the loaded library knows (its
     /// first page, plus likes given in this session).
-    #[expect(
-        dead_code,
-        reason = "used by the Sprint 3 UI on the sprint-3-ui branch"
-    )]
     pub fn is_liked(&self, track_id: &str) -> bool {
         self.library
             .as_ref()
@@ -131,10 +127,6 @@ impl Account {
 
     /// Likes the track in YouTube Music, or takes the like back. The library changes at once and
     /// is put back if YouTube refuses.
-    #[expect(
-        dead_code,
-        reason = "used by the Sprint 3 UI on the sprint-3-ui branch"
-    )]
     pub fn toggle_like(&mut self, track: Track, cx: &mut Context<Self>) {
         if !self.is_signed_in() {
             return;
