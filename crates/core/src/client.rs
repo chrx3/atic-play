@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use rustypipe::client::{RustyPipe, RustyPipeQuery};
@@ -546,7 +546,23 @@ impl Client {
                 .bytes()
                 .await?;
             tokio::fs::create_dir_all(&dir).await?;
-            tokio::fs::write(&path, &bytes).await?;
+            // The same cover is often requested twice at once (the player and the queue panel).
+            // Each download writes its own file and renames it into place, so nobody ever reads
+            // a half-written cover.
+            static WRITES: AtomicU64 = AtomicU64::new(0);
+            let partial = dir.join(format!(
+                "{key}-{size_px}.{}-{}.part",
+                std::process::id(),
+                WRITES.fetch_add(1, Ordering::Relaxed)
+            ));
+            tokio::fs::write(&partial, &bytes).await?;
+            if let Err(err) = tokio::fs::rename(&partial, &path).await {
+                // Another download got there first; its file is just as good.
+                tokio::fs::remove_file(&partial).await.ok();
+                if !tokio::fs::try_exists(&path).await? {
+                    return Err(err.into());
+                }
+            }
             Ok(path)
         })
     }

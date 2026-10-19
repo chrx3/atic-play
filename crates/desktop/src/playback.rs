@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui::{Context, Hsla, SharedString, Subscription, Task, rgb};
-use material_colors::image::{FilterType, ImageReader};
+use material_colors::image::{Image, ImageReader};
 use ytm_core::{AudioPlayer, Client, Queue, RepeatMode, Track};
 
 use crate::media_session::{MediaEvent, MediaSession, MediaState, SeekDirection};
@@ -154,7 +154,10 @@ impl Playback {
 
     /// How loud the music is right now (0 to about 1), for visualizers; 0 unless playing.
     /// The volume setting does not affect it.
-    #[expect(dead_code, reason = "for the Sprint 2 visualizer, merged from the sprint-2 branch")]
+    #[expect(
+        dead_code,
+        reason = "for the Sprint 2 visualizer, merged from the sprint-2 branch"
+    )]
     pub fn audio_level(&self) -> f32 {
         match &self.player {
             Some(player) if self.is_playing() => player.level(),
@@ -596,12 +599,45 @@ impl Playback {
 
 /// The cover color best suited for a theme, as Material You picks it from a wallpaper.
 fn seed_color(cover: &Path) -> Option<Hsla> {
-    let mut image = ImageReader::open(cover)
+    // Decoded here rather than with `ImageReader::open`, which panics on a damaged file; on a
+    // GPUI worker thread that panic aborts the whole app.
+    let decoded = image::ImageReader::open(cover)
+        .and_then(|reader| reader.with_guessed_format())
+        .map_err(image::ImageError::IoError)
+        .and_then(|reader| reader.decode())
         .inspect_err(|err| log::warn!("could not read {}: {err}", cover.display()))
         .ok()?;
     // Quantizing a small copy gives the same seed and is much faster.
-    image.resize(128, 128, FilterType::Triangle);
-    let argb = ImageReader::extract_color(&image);
+    let small = image::imageops::thumbnail(&decoded.into_rgba8(), 128, 128);
+    let argb = ImageReader::extract_color(&Image::new(small));
     let packed = (u32::from(argb.red) << 16) | (u32::from(argb.green) << 8) | u32::from(argb.blue);
     Some(rgb(packed).into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn damaged_cover_gives_no_seed_instead_of_panicking() {
+        let path = std::env::temp_dir().join(format!("atic-play-test-{}.jpg", std::process::id()));
+        // A JPEG header cut short, as a cover read while still being written looks.
+        std::fs::write(&path, [0xFF, 0xD8, 0xFF, 0xE0, 0x00]).unwrap();
+
+        assert!(seed_color(&path).is_none());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn seed_comes_from_the_cover_colors() {
+        let path = std::env::temp_dir().join(format!("atic-play-test-{}.png", std::process::id()));
+        image::RgbImage::from_pixel(32, 32, image::Rgb([200, 30, 30]))
+            .save(&path)
+            .unwrap();
+
+        let seed = seed_color(&path).expect("a valid cover has a seed");
+        std::fs::remove_file(&path).ok();
+        // A red cover gives a red seed (hue near 0 or 1).
+        assert!(seed.h < 0.05 || seed.h > 0.95, "hue {}", seed.h);
+    }
 }
