@@ -1,5 +1,6 @@
 //! YouTube Music access and audio playback, independent of any UI toolkit.
 
+mod audio_cache;
 mod client;
 mod lyrics;
 mod player;
