@@ -1,6 +1,3 @@
-use std::future::Future;
-
-use anyhow::Result;
 use gpui::{
     ClickEvent, Context, Entity, EventEmitter, SharedString, Subscription, Window, div, prelude::*,
     px,
@@ -54,7 +51,7 @@ impl SettingsView {
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.cache_size = CacheSize::Measuring;
         cx.notify();
-        let size = audio_cache_bytes(&self.client);
+        let size = self.client.audio_cache_bytes();
         cx.spawn(async move |this, cx| {
             let size = size.await;
             this.update(cx, |this, cx| {
@@ -78,7 +75,7 @@ impl SettingsView {
         }
         self.clearing = true;
         cx.notify();
-        let clear = clear_audio_cache(&self.client);
+        let clear = self.client.clear_audio_cache();
         cx.spawn(async move |this, cx| {
             let result = clear.await;
             this.update(cx, |this, cx| {
@@ -251,16 +248,6 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{value:.1} {}", UNITS[unit]).replace('.', ",")
     }
-}
-
-// Stand-ins until `Client::audio_cache_bytes` and `Client::clear_audio_cache` land from the
-// `offline` branch; then each body becomes a call to the client.
-fn audio_cache_bytes(_client: &Client) -> impl Future<Output = Result<u64>> + use<> {
-    async { Ok(0) }
-}
-
-fn clear_audio_cache(_client: &Client) -> impl Future<Output = Result<()>> + use<> {
-    async { Ok(()) }
 }
 
 #[cfg(test)]
