@@ -5,12 +5,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, Result, anyhow, bail};
+use serde::{Deserialize, Serialize};
 use rustypipe::client::{RustyPipe, RustyPipeQuery};
 use rustypipe::model::{
     AlbumItem, ArtistId, ArtistItem, MusicPlaylistItem, Thumbnail, TrackItem, VideoItem,
 };
 use tokio::process::Command;
 use tokio::runtime::Runtime;
+
+use crate::audio_cache::AudioCache;
 
 /// YouTube serves full-length downloads slowly; ranged requests of this size are not throttled.
 const CHUNK_SIZE: u64 = 10 * 1024 * 1024;
@@ -22,7 +25,7 @@ const AUDIO_FORMAT: &str = "141/140/bestaudio[ext=m4a]";
 const MAX_PLAYLIST_TRACKS: usize = 500;
 
 /// A song as the UI shows it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     pub id: String,
     pub title: String,
@@ -241,9 +244,16 @@ pub struct Client {
     /// The session cookies; they exist only while signed in.
     cookies_path: PathBuf,
     signed_in: Arc<AtomicBool>,
+    audio_cache: Option<Arc<AudioCache>>,
 }
 
 impl Client {
+    /// Keeps up to `max_bytes` of downloaded tracks in `dir`, dropping the least recently played.
+    pub fn with_audio_cache(mut self, dir: impl Into<PathBuf>, max_bytes: u64) -> Self {
+        self.audio_cache = Some(Arc::new(AudioCache::new(dir.into(), max_bytes)));
+        self
+    }
+
     /// `data_dir` keeps rustypipe's cache and the session; it is created if missing. Uses the
     /// yt-dlp binary named by the `YT_DLP` environment variable, or `yt-dlp` on PATH.
     pub fn new(data_dir: impl Into<PathBuf>) -> Result<Self> {
@@ -262,6 +272,7 @@ impl Client {
             yt_dlp: std::env::var_os("YT_DLP").unwrap_or_else(|| "yt-dlp".into()),
             cookies_path: data_dir.join("cookies.txt"),
             signed_in: Arc::default(),
+            audio_cache: None,
         })
     }
 
@@ -492,10 +503,23 @@ impl Client {
         let http = self.http.clone();
         let yt_dlp = self.yt_dlp.clone();
         let cookies = self.is_signed_in().then(|| self.cookies_path.clone());
+        let cache = self.audio_cache.clone();
         self.spawn(async move {
+            if let Some(cache) = &cache
+                && let Some(bytes) = cache.read(&track_id).await
+            {
+                log::info!("track {track_id}: from the audio cache");
+                return Ok(bytes);
+            }
             let stream = resolve_stream(&yt_dlp, cookies.as_deref(), &track_id).await?;
             log::info!("track {track_id}: itag {}", stream.format_id);
-            download(&http, &stream).await
+            let bytes = download(&http, &stream).await?;
+            if let Some(cache) = &cache
+                && let Err(err) = cache.write(&track_id, &bytes).await
+            {
+                log::warn!("could not cache {track_id}: {err:#}");
+            }
+            Ok(bytes)
         })
     }
 

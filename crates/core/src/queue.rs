@@ -1,8 +1,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
 use crate::Track;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepeatMode {
     #[default]
     Off,
@@ -65,6 +67,18 @@ impl Queue {
 
     pub fn shuffle(&self) -> bool {
         self.unshuffled.is_some()
+    }
+
+    pub fn set_repeat(&mut self, repeat: RepeatMode) {
+        self.repeat = repeat;
+    }
+
+    /// Puts back a queue saved earlier, in the order it was saved, without reshuffling it. With
+    /// `shuffle` on, turning it off later keeps that order (the original one is not saved).
+    pub fn restore(&mut self, tracks: Vec<Track>, current: Option<usize>, shuffle: bool) {
+        self.current = current.filter(|index| *index < tracks.len());
+        self.unshuffled = shuffle.then(|| tracks.clone());
+        self.tracks = tracks;
     }
 
     /// Replaces the queue and makes `start` the current track.
@@ -263,6 +277,20 @@ mod tests {
         queue.set_shuffle(false);
         assert_eq!(ids(&queue), all);
         assert_eq!(current_id(&queue), Some(playing.as_str()));
+    }
+
+    #[test]
+    fn restore_keeps_the_saved_order_and_position() {
+        let mut queue = Queue::default();
+        let tracks: Vec<_> = ["c", "a", "b"].iter().map(|id| track(id)).collect();
+        queue.restore(tracks, Some(1), true);
+        assert_eq!(ids(&queue), ["c", "a", "b"]);
+        assert_eq!(current_id(&queue), Some("a"));
+        assert!(queue.shuffle());
+
+        queue.restore(vec![track("a")], Some(5), false);
+        assert_eq!(current_id(&queue), None);
+        assert!(!queue.shuffle());
     }
 
     #[test]
