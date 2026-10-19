@@ -145,7 +145,7 @@ impl PlayerBar {
         let repeat = playback.queue().repeat();
         let position = playback.position();
         let duration = playback.duration();
-        let level = audio_level(playback);
+        let level = playback.audio_level();
         let progress = duration.map(|duration| {
             (position.as_secs_f32() / duration.as_secs_f32().max(1.)).clamp(0., 1.)
         });
@@ -373,11 +373,4 @@ impl Render for PlayerBar {
                     .child(self.render_volume(cx)),
             )
     }
-}
-
-/// How loud the current track is right now (0..1), for the wave.
-// Stand-in until `Playback::audio_level()` lands: a steady level while playing, so the wave
-// still settles flat when paused.
-fn audio_level(playback: &Playback) -> f32 {
-    if playback.is_playing() { 0.45 } else { 0. }
 }
