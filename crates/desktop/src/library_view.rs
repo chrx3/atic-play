@@ -6,6 +6,8 @@ use ytm_core::{Library, Playlist};
 
 use crate::account::{Account, AccountState};
 use crate::covers::Covers;
+use crate::download_ui::downloaded_mark;
+use crate::downloads::{DownloadedCollection, Downloads};
 use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening};
@@ -22,9 +24,16 @@ enum Tab {
     Liked,
     Albums,
     Artists,
+    Downloads,
 }
 
-const TABS: [Tab; 4] = [Tab::Playlists, Tab::Liked, Tab::Albums, Tab::Artists];
+const TABS: [Tab; 5] = [
+    Tab::Playlists,
+    Tab::Liked,
+    Tab::Albums,
+    Tab::Artists,
+    Tab::Downloads,
+];
 
 pub enum LibraryEvent {
     SignIn,
@@ -37,6 +46,7 @@ pub struct LibraryView {
     playback: Entity<Playback>,
     covers: Entity<Covers>,
     navigation: Entity<Navigation>,
+    downloads: Entity<Downloads>,
     tab: Tab,
     _subscriptions: Vec<Subscription>,
 }
@@ -51,16 +61,19 @@ impl LibraryView {
         navigation: Entity<Navigation>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let downloads = Downloads::global(cx);
         let subscriptions = vec![
             cx.observe(&account, |_, _, cx| cx.notify()),
             cx.observe(&covers, |_, _, cx| cx.notify()),
             observe_opening(&playback, cx),
+            cx.observe(&downloads, |_, _, cx| cx.notify()),
         ];
         LibraryView {
             account,
             playback,
             covers,
             navigation,
+            downloads,
             tab: Tab::Playlists,
             _subscriptions: subscriptions,
         }
@@ -117,9 +130,12 @@ impl LibraryView {
                 subtitle.extend(track.duration_secs.map(|secs| format_time(secs.into())));
                 let playback = self.playback.clone();
                 let liked = library.liked.clone();
+                let mark =
+                    downloaded_mark(("liked-downloaded", index), &track.id, &self.downloads, cx);
                 let row = ListItem::new(("liked", index), track.title.clone())
                     .subtitle(subtitle.join(" · "))
                     .leading(thumbnail(thumb, 48., 8., cx))
+                    .trailing(div().children(mark))
                     // Plays the liked songs from this one on, as YouTube Music does.
                     .on_click(move |_: &ClickEvent, _, cx| {
                         let liked = liked.clone();
@@ -135,57 +151,52 @@ impl LibraryView {
             .children(rows)
             .into_any_element()
     }
-}
-
-impl Render for LibraryView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The YouTube Music tabs, which need the session.
+    fn render_saved(&self, cx: &mut Context<Self>) -> AnyElement {
         let s = *Theme::of(cx);
         let account = self.account.read(cx);
         let error = account.error().cloned();
-        let loading = account.is_library_loading();
         let library = account.library().cloned();
 
         match account.state() {
             AccountState::Restoring | AccountState::SigningIn => {
-                return div()
-                    .size_full()
-                    .pt_4()
-                    .child(skeleton_rows(8))
-                    .into_any_element();
+                return skeleton_rows(8).into_any_element();
             }
             AccountState::SignedOut => {
-                return placeholder(
-                    "Tu biblioteca",
-                    "Inicia sesión para ver tus playlists, tus me gusta, álbumes y artistas",
-                    cx,
-                )
-                .child(
-                    div().pt_2().child(
-                        Button::new("library-sign-in", "Iniciar sesión")
-                            .filled()
-                            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                                cx.emit(LibraryEvent::SignIn)
-                            })),
-                    ),
-                )
-                .into_any_element();
+                return div()
+                    .pt_16()
+                    .child(
+                        placeholder(
+                            "Tu biblioteca",
+                            "Inicia sesión para ver tus playlists, tus me gusta, álbumes y artistas",
+                            cx,
+                        )
+                        .child(
+                            div().pt_2().child(
+                                Button::new("library-sign-in", "Iniciar sesión")
+                                    .filled()
+                                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                                        cx.emit(LibraryEvent::SignIn)
+                                    })),
+                            ),
+                        ),
+                    )
+                    .into_any_element();
             }
             AccountState::SignedIn => {}
         }
 
         let Some(library) = library else {
             if let Some(error) = error {
-                return placeholder("No se pudo cargar tu biblioteca", error, cx)
+                return div()
+                    .pt_16()
+                    .child(placeholder("No se pudo cargar tu biblioteca", error, cx))
                     .into_any_element();
             }
-            return div()
-                .size_full()
-                .pt_4()
-                .child(skeleton_rows(8))
-                .into_any_element();
+            return skeleton_rows(8).into_any_element();
         };
 
-        let content = match self.tab {
+        match self.tab {
             Tab::Playlists if !library.playlists.is_empty() => {
                 self.render_playlists(&library.playlists, cx)
             }
@@ -226,13 +237,103 @@ impl Render for LibraryView {
                     .collect();
                 grid(cards)
             }
-            _ => div()
-                .pt_16()
-                .flex()
-                .justify_center()
-                .text_color(s.on_surface_variant)
-                .child("Nada por aquí todavía")
-                .into_any_element(),
+            _ => nothing_here(s.on_surface_variant, "Nada por aquí todavía"),
+        }
+    }
+
+    /// Playlists and albums kept offline. Works without a session or a connection: clicking
+    /// one plays it from disk.
+    fn render_downloads(&self, cx: &mut Context<Self>) -> AnyElement {
+        let s = *Theme::of(cx);
+        let collections = self.downloads.read(cx).collections().to_vec();
+        if collections.is_empty() {
+            return nothing_here(
+                s.on_surface_variant,
+                "Descarga una playlist o un álbum para escucharlo sin conexión",
+            );
+        }
+        let rows: Vec<_> = collections
+            .into_iter()
+            .enumerate()
+            .map(|(index, collection)| {
+                let first = collection.tracks.first();
+                let thumb = first.and_then(|track| {
+                    self.covers.update(cx, |covers, cx| {
+                        covers.get(&track.id, track.cover_url.as_deref(), THUMB_SIZE, cx)
+                    })
+                });
+                let state = self.downloads.read(cx).state(&collection.id);
+                let count = format!("{} canciones", collection.tracks.len());
+                let subtitle = match state {
+                    Some(state) if state.active => {
+                        format!("{count} · Descargando {} de {}", state.done, state.total)
+                    }
+                    _ => format!("{count} · Descargada"),
+                };
+
+                let playback = self.playback.clone();
+                let tracks = collection.tracks.clone();
+                let open = {
+                    let navigation = self.navigation.clone();
+                    let collection = collection.clone();
+                    cx.listener(move |_, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        open_collection(&collection, &navigation, cx);
+                    })
+                };
+                let remove = {
+                    let downloads = self.downloads.clone();
+                    let id = collection.id.clone();
+                    move |_: &ClickEvent, _: &mut Window, cx: &mut gpui::App| {
+                        cx.stop_propagation();
+                        downloads.update(cx, |downloads, cx| downloads.remove(&id, cx));
+                    }
+                };
+                ListItem::new(("download", index), collection.title.clone())
+                    .subtitle(subtitle)
+                    .leading(thumbnail(thumb, 48., 8., cx))
+                    .trailing(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                IconButton::new(("open-download", index), "chevron-right")
+                                    .tooltip("Abrir")
+                                    .on_click(open),
+                            )
+                            .child(
+                                IconButton::new(("remove-download", index), "trash")
+                                    .tooltip("Quitar descarga")
+                                    .on_click(remove),
+                            ),
+                    )
+                    .on_click(move |_: &ClickEvent, _, cx| {
+                        let tracks = tracks.clone();
+                        playback.update(cx, |playback, cx| playback.play_tracks(tracks, 0, cx));
+                    })
+            })
+            .collect();
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .children(rows)
+            .into_any_element()
+    }
+}
+
+impl Render for LibraryView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let s = *Theme::of(cx);
+        let account = self.account.read(cx);
+        let signed_in = account.is_signed_in();
+        let loading = account.is_library_loading();
+        let error = account.error().cloned().filter(|_| signed_in);
+
+        let content = match self.tab {
+            Tab::Downloads => self.render_downloads(cx),
+            _ => self.render_saved(cx),
         };
 
         let view = cx.entity().downgrade();
@@ -254,7 +355,7 @@ impl Render for LibraryView {
                     .child(section_title("Tu biblioteca"))
                     .child(
                         IconButton::new("library-reload", "refresh")
-                            .disabled(loading)
+                            .disabled(loading || !signed_in)
                             .tooltip("Actualizar")
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.account
@@ -270,6 +371,7 @@ impl Render for LibraryView {
                                 Segment::label("Me gusta"),
                                 Segment::label("Álbumes"),
                                 Segment::label("Artistas"),
+                                Segment::label("Descargas"),
                             ],
                             selected,
                         )
@@ -286,6 +388,40 @@ impl Render for LibraryView {
             .child(content)
             .into_any_element()
     }
+}
+
+/// Opens the page of a downloaded playlist or album. Downloads do not record which one they
+/// are, but YouTube Music album ids are browse ids starting with "MPREb".
+fn open_collection(
+    collection: &DownloadedCollection,
+    navigation: &Entity<Navigation>,
+    cx: &mut Context<LibraryView>,
+) {
+    if collection.id.starts_with("MPREb") {
+        let id = collection.id.clone();
+        navigation.update(cx, |navigation, cx| navigation.open_album(id, None, cx));
+    } else {
+        cx.emit(LibraryEvent::OpenPlaylist(Playlist {
+            id: collection.id.clone(),
+            title: collection.title.clone(),
+            owner: None,
+            track_count: Some(collection.tracks.len() as u64),
+            cover_url: collection
+                .tracks
+                .first()
+                .and_then(|track| track.cover_url.clone()),
+        }));
+    }
+}
+
+fn nothing_here(color: gpui::Hsla, message: &'static str) -> AnyElement {
+    div()
+        .pt_16()
+        .flex()
+        .justify_center()
+        .text_color(color)
+        .child(message)
+        .into_any_element()
 }
 
 fn grid(cards: Vec<impl IntoElement>) -> AnyElement {

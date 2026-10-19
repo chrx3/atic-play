@@ -7,6 +7,7 @@ use ytm_core::{Artist, ArtistPage, Client, Track};
 
 use crate::assets;
 use crate::covers::Covers;
+use crate::downloads::Downloads;
 use crate::navigation::Navigation;
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening, track_row};
@@ -51,6 +52,8 @@ impl ArtistView {
         let subscriptions = vec![
             cx.observe(&covers, |_, _, cx| cx.notify()),
             observe_opening(&playback, cx),
+            // The marks on downloaded songs.
+            cx.observe(&Downloads::global(cx), |_, _, cx| cx.notify()),
         ];
         ArtistView {
             client,

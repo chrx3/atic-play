@@ -5,11 +5,13 @@ use gpui::{
     AnyElement, App, ClickEvent, Context, Div, Entity, SharedString, Stateful, Subscription,
     Window, div, prelude::*, px,
 };
-use gpui_m3::{IconButton, ListItem, Segment, SegmentedButtons, Theme};
+use gpui_m3::{IconButton, ListItem, Segment, SegmentedButtons, Theme, motion};
 use ytm_core::{Album, Artist, Client, Track};
 
 use crate::assets;
 use crate::covers::Covers;
+use crate::download_ui::downloaded_mark;
+use crate::downloads::Downloads;
 use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::ui::{
@@ -61,6 +63,8 @@ impl SearchView {
         let subscriptions = vec![
             cx.observe(&covers, |_, _, cx| cx.notify()),
             observe_opening(&playback, cx),
+            // The marks on downloaded songs.
+            cx.observe(&Downloads::global(cx), |_, _, cx| cx.notify()),
         ];
         SearchView {
             client,
@@ -334,9 +338,17 @@ pub fn track_row<V: 'static>(
     subtitle.extend(track.duration_secs.map(|secs| format_time(secs.into())));
     let playback = playback.clone();
     let clicked = track.clone();
+    let id = id.into();
+    let mark = downloaded_mark(
+        motion::key(&id, "downloaded"),
+        &track.id,
+        &Downloads::global(cx),
+        cx,
+    );
     let row = ListItem::new(id, track.title.clone())
         .subtitle(subtitle.join(" · "))
         .leading(thumbnail(thumb, 48., 8., cx))
+        .trailing(div().children(mark))
         .on_click(move |_: &ClickEvent, _, cx| {
             let track = clicked.clone();
             playback.update(cx, |playback, cx| playback.play_tracks(vec![track], 0, cx));
