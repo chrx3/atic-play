@@ -4,13 +4,18 @@ use gpui::{
     AnyElement, AnyView, ClickEvent, Context, Div, Entity, Hsla, StyleRefinement, Subscription,
     Window, div, prelude::*, px,
 };
-use gpui_m3::{IconButton, TextField, TextFieldEvent, Theme};
+use gpui_m3::{
+    IconButton, Segment, SegmentedButtons, Spring, TextField, TextFieldEvent, Theme, animate_theme,
+    motion,
+};
 use ytm_core::{Client, Playlist};
 
 use crate::account::Account;
 use crate::covers::Covers;
 use crate::home_view::HomeView;
 use crate::library_view::{LibraryEvent, LibraryView};
+use crate::lyrics_panel::LyricsPanel;
+use crate::now_playing_view::{NowPlayingEvent, NowPlayingView};
 use crate::playback::Playback;
 use crate::player_bar::{PlayerBar, PlayerBarEvent};
 use crate::playlist_view::PlaylistView;
@@ -22,6 +27,17 @@ use crate::ui::placeholder;
 
 const SIDEBAR_WIDTH: f32 = 240.;
 const QUEUE_WIDTH: f32 = 340.;
+/// How far a new page slides up as it fades in.
+const ROUTE_SLIDE: f32 = 24.;
+/// How far "Reproduciendo" rises as it opens.
+const NOW_PLAYING_SLIDE: f32 = 64.;
+
+/// What the right panel shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SidePanel {
+    Queue,
+    Lyrics,
+}
 
 /// The window: sidebar, content and queue panel above the player bar.
 pub struct YtmApp {
@@ -35,8 +51,14 @@ pub struct YtmApp {
     library_view: Entity<LibraryView>,
     playlist_view: Entity<PlaylistView>,
     queue_panel: Entity<QueuePanel>,
+    lyrics_panel: Entity<LyricsPanel>,
+    now_playing_view: Entity<NowPlayingView>,
     player_bar: Entity<PlayerBar>,
     queue_open: bool,
+    side_panel: SidePanel,
+    now_playing_open: bool,
+    /// Bumped on every page change, so each new page plays its entrance.
+    page_generation: usize,
     sign_in_open: bool,
     dark: bool,
     applied_seed: Option<Hsla>,
@@ -57,6 +79,10 @@ impl YtmApp {
         let playlist_view =
             cx.new(|cx| PlaylistView::new(client.clone(), playback.clone(), covers.clone(), cx));
         let queue_panel = cx.new(|cx| QueuePanel::new(playback.clone(), covers.clone(), cx));
+        let lyrics_panel = cx.new(|cx| LyricsPanel::new(playback.clone(), cx));
+        let now_playing_view = cx.new(|cx| {
+            NowPlayingView::new(playback.clone(), covers.clone(), lyrics_panel.clone(), cx)
+        });
         let player_bar = cx.new(|cx| PlayerBar::new(playback.clone(), covers.clone(), cx));
         let search_field = cx.new(|cx| {
             TextField::new(cx)
@@ -67,10 +93,9 @@ impl YtmApp {
         let subscriptions = vec![
             cx.subscribe(&search_field, |this, _, event: &TextFieldEvent, cx| {
                 if let TextFieldEvent::Submitted(query) = event {
-                    this.route = Route::Search;
+                    this.navigate(Route::Search, cx);
                     this.search_view
                         .update(cx, |view, cx| view.search(query.to_string(), cx));
-                    cx.notify();
                 }
             }),
             cx.subscribe(
@@ -83,6 +108,15 @@ impl YtmApp {
                             .update(cx, |bar, cx| bar.set_queue_open(open, cx));
                         cx.notify();
                     }
+                    PlayerBarEvent::ToggleNowPlaying => {
+                        this.set_now_playing_open(!this.now_playing_open, cx)
+                    }
+                },
+            ),
+            cx.subscribe(
+                &now_playing_view,
+                |this, _, event: &NowPlayingEvent, cx| match event {
+                    NowPlayingEvent::Close => this.set_now_playing_open(false, cx),
                 },
             ),
             cx.subscribe(
@@ -104,13 +138,13 @@ impl YtmApp {
                 }
                 cx.notify();
             }),
-            // Recolor the app from each new cover. Progress ticks change nothing here, so this
-            // does not redraw the window on its own.
+            // Recolor the app from each new cover, blending into the new colors. Progress ticks
+            // change nothing here, so this does not redraw the window on its own.
             cx.observe(&playback, |this, playback, cx| {
                 let seed = playback.read(cx).seed();
                 if seed != this.applied_seed {
                     this.applied_seed = seed;
-                    Theme::set(this.dark, seed, cx);
+                    animate_theme(this.dark, seed, cx);
                 }
             }),
         ];
@@ -125,8 +159,13 @@ impl YtmApp {
             library_view,
             playlist_view,
             queue_panel,
+            lyrics_panel,
+            now_playing_view,
             player_bar,
             queue_open: true,
+            side_panel: SidePanel::Queue,
+            now_playing_open: false,
+            page_generation: 0,
             sign_in_open: false,
             dark: true,
             applied_seed: None,
@@ -134,11 +173,36 @@ impl YtmApp {
         }
     }
 
+    /// Shows `route`, leaving "Reproduciendo" if it is open.
+    fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
+        if route != self.route {
+            self.page_generation += 1;
+        }
+        self.route = route;
+        self.set_now_playing_open(false, cx);
+        cx.notify();
+    }
+
     fn open_playlist(&mut self, playlist: Playlist, cx: &mut Context<Self>) {
-        self.route = Route::Playlist;
+        // Another playlist is another page, even though the route stays the same.
+        if self.open_playlist.as_ref() != Some(&playlist.id) {
+            self.page_generation += 1;
+        }
         self.open_playlist = Some(playlist.id.clone());
+        self.navigate(Route::Playlist, cx);
         self.playlist_view
             .update(cx, |view, cx| view.open(playlist, cx));
+    }
+
+    fn set_now_playing_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if open == self.now_playing_open {
+            return;
+        }
+        self.now_playing_open = open;
+        // Each way plays an entrance: "Reproduciendo" rises in, the page comes back.
+        self.page_generation += 1;
+        self.player_bar
+            .update(cx, |bar, cx| bar.set_now_playing_open(open, cx));
         cx.notify();
     }
 
@@ -148,33 +212,92 @@ impl YtmApp {
         cx.notify();
     }
 
-    fn render_content(&self, cx: &mut Context<Self>) -> AnyElement {
-        match self.route {
-            // Cached: the player bar redraws the window every frame while the wave moves.
-            Route::Search => AnyView::from(self.search_view.clone())
+    /// The page on screen, fading and sliding in when it changes.
+    fn render_content(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let progress = motion::entrance(
+            ("page", self.page_generation),
+            Spring::SPATIAL,
+            0.,
+            window,
+            cx,
+        );
+        let view = match self.route {
+            Route::Search => Some(AnyView::from(self.search_view.clone())),
+            Route::Home => Some(AnyView::from(self.home_view.clone())),
+            Route::Explore => None,
+            Route::Library => Some(AnyView::from(self.library_view.clone())),
+            Route::Playlist => Some(AnyView::from(self.playlist_view.clone())),
+        };
+        let page = match view {
+            // Cached: the player bar redraws the window every frame while the wave moves. Not
+            // while it moves in, though: a cached view would replay its last frame without the
+            // fade.
+            Some(view) if progress >= 1. => view
                 .cached(StyleRefinement::default().size_full())
                 .into_any_element(),
-            Route::Home => AnyView::from(self.home_view.clone())
-                .cached(StyleRefinement::default().size_full())
-                .into_any_element(),
-            Route::Explore => placeholder(
+            Some(view) => view.into_any_element(),
+            None => placeholder(
                 "Explorar",
                 "Pronto: tendencias, géneros y estados de ánimo",
                 cx,
             )
             .into_any_element(),
-            Route::Library => AnyView::from(self.library_view.clone())
-                .cached(StyleRefinement::default().size_full())
-                .into_any_element(),
-            Route::Playlist => AnyView::from(self.playlist_view.clone())
-                .cached(StyleRefinement::default().size_full())
-                .into_any_element(),
+        };
+        if progress >= 1. {
+            return page;
         }
+        div()
+            .size_full()
+            .relative()
+            .top(px((1. - progress) * ROUTE_SLIDE))
+            .opacity(progress.clamp(0., 1.))
+            .child(page)
+            .into_any_element()
+    }
+
+    /// The right panel: the queue or the lyrics, under tabs.
+    fn render_side_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let view = cx.entity().downgrade();
+        let (content, selected) = match self.side_panel {
+            SidePanel::Queue => (AnyView::from(self.queue_panel.clone()), 0),
+            SidePanel::Lyrics => (AnyView::from(self.lyrics_panel.clone()), 1),
+        };
+        div()
+            .w(px(QUEUE_WIDTH))
+            .h_full()
+            .flex()
+            .flex_col()
+            .child(
+                div().px_4().pt_4().child(
+                    SegmentedButtons::new(
+                        "side-panel",
+                        [Segment::label("Cola"), Segment::label("Letra")],
+                        selected,
+                    )
+                    .on_change(move |index, _, cx| {
+                        view.update(cx, |this, cx| {
+                            this.side_panel = if index == 0 {
+                                SidePanel::Queue
+                            } else {
+                                SidePanel::Lyrics
+                            };
+                            cx.notify();
+                        })
+                        .ok();
+                    }),
+                ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(content.cached(StyleRefinement::default().size_full())),
+            )
     }
 }
 
 impl Render for YtmApp {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = *Theme::of(cx);
         let view = cx.entity().downgrade();
         let navigate = view.clone();
@@ -186,10 +309,7 @@ impl Render for YtmApp {
             self.account.clone(),
             move |route, _, cx| {
                 navigate
-                    .update(cx, |this, cx| {
-                        this.route = route;
-                        cx.notify();
-                    })
+                    .update(cx, |this, cx| this.navigate(route, cx))
                     .ok();
             },
             move |playlist, _, cx| {
@@ -239,6 +359,61 @@ impl Render for YtmApp {
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_dark(cx))),
             );
 
+        // The right panel grows and shrinks instead of popping in and out.
+        let side_width = motion::animate_f32(
+            "side-panel-width",
+            Spring::SPATIAL,
+            if self.queue_open { QUEUE_WIDTH } else { 0. },
+            window,
+            cx,
+        );
+        let main = if self.now_playing_open {
+            let progress = motion::entrance(
+                ("now-playing", self.page_generation),
+                Spring::SPATIAL,
+                0.,
+                window,
+                cx,
+            );
+            panel(cx)
+                .flex_1()
+                .min_h_0()
+                .relative()
+                .top(px((1. - progress) * NOW_PLAYING_SLIDE))
+                .opacity(progress.clamp(0., 1.))
+                .child(self.now_playing_view.clone())
+        } else {
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .gap_2()
+                .child(panel(cx).w(px(SIDEBAR_WIDTH)).flex_none().child(sidebar))
+                .child(
+                    panel(cx)
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(header)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_h_0()
+                                .child(self.render_content(window, cx)),
+                        ),
+                )
+                // Under a pixel wide it is gone, and so is its gap.
+                .when(side_width >= 1., |row| {
+                    row.child(
+                        panel(cx)
+                            .w(px(side_width))
+                            .flex_none()
+                            .child(self.render_side_panel(cx)),
+                    )
+                })
+        };
+
         div()
             .size_full()
             .flex()
@@ -249,31 +424,7 @@ impl Render for YtmApp {
             .bg(s.surface)
             .text_color(s.on_surface)
             .font_family(gpui_m3::theme::FONT_FAMILY)
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .gap_2()
-                    .child(panel(cx).w(px(SIDEBAR_WIDTH)).flex_none().child(sidebar))
-                    .child(
-                        panel(cx)
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(header)
-                            .child(div().flex_1().min_h_0().child(self.render_content(cx))),
-                    )
-                    .when(self.queue_open, |row| {
-                        row.child(
-                            panel(cx).w(px(QUEUE_WIDTH)).flex_none().child(
-                                AnyView::from(self.queue_panel.clone())
-                                    .cached(StyleRefinement::default().size_full()),
-                            ),
-                        )
-                    }),
-            )
+            .child(main)
             .child(self.player_bar.clone())
             .children(sign_in)
     }
