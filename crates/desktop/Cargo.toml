@@ -14,6 +14,8 @@ embed-resource = "3"
 
 [dependencies]
 anyhow = "1"
+# Logs to the console; `RUST_LOG` picks what is shown.
+env_logger = "0.11"
 gpui = "0.2.2"
 # Local checkout, so the library can evolve with the app. Switch to `gpui-m3 = "0.1"` to build
 # from crates.io.

@@ -5,6 +5,7 @@ mod artist_view;
 mod assets;
 mod audio_wave;
 mod covers;
+mod downloads;
 mod google_sign_in;
 mod home_view;
 mod library_view;
@@ -50,15 +51,22 @@ fn data_dir() -> PathBuf {
 /// Downloaded tracks kept on disk; about 600 songs at Premium quality.
 const AUDIO_CACHE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
-/// The audio cache goes in `%LOCALAPPDATA%` on Windows: it is large and should not roam.
-fn audio_cache_dir(data_dir: &Path) -> PathBuf {
+/// Where the audio cache and offline downloads go: `%LOCALAPPDATA%` on Windows, because they
+/// are large and should not roam with the profile.
+fn local_dir(data_dir: &Path) -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(|local| PathBuf::from(local).join("atic-play"))
         .unwrap_or_else(|| data_dir.to_path_buf())
-        .join("audio")
 }
 
 fn main() -> ExitCode {
+    // Our own crates log what they do (cached or downloaded, itag, errors); dependencies only
+    // warnings. `RUST_LOG` overrides it.
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("warn,atic_play=info,ytm_core=info"),
+    )
+    .init();
+
     let args: Vec<_> = std::env::args_os().collect();
     if args.get(1).is_some_and(|arg| arg == google_sign_in::ARG) {
         return match (args.get(2), args.get(3)) {
@@ -75,16 +83,20 @@ fn main() -> ExitCode {
 
             let data_dir = data_dir();
             settings::init(&data_dir, cx);
+            let local_dir = local_dir(&data_dir);
             let client = match Client::new(&data_dir) {
-                Ok(client) => {
-                    client.with_audio_cache(audio_cache_dir(&data_dir), AUDIO_CACHE_BYTES)
-                }
+                Ok(client) => client.with_audio_cache(
+                    local_dir.join("audio"),
+                    local_dir.join("offline"),
+                    AUDIO_CACHE_BYTES,
+                ),
                 Err(err) => {
-                    eprintln!("could not start the YouTube Music client: {err:#}");
+                    log::error!("could not start the YouTube Music client: {err:#}");
                     cx.quit();
                     return;
                 }
             };
+            downloads::init(client.clone(), &data_dir, cx);
 
             let window_bounds = match settings::get(cx).window {
                 Some(saved) => saved.to_window(),

@@ -285,8 +285,18 @@ pub struct Client {
 
 impl Client {
     /// Keeps up to `max_bytes` of downloaded tracks in `dir`, dropping the least recently played.
-    pub fn with_audio_cache(mut self, dir: impl Into<PathBuf>, max_bytes: u64) -> Self {
-        self.audio_cache = Some(Arc::new(AudioCache::new(dir.into(), max_bytes)));
+    /// Downloaded tracks the user keeps offline go in `offline_dir`, which is never pruned.
+    pub fn with_audio_cache(
+        mut self,
+        dir: impl Into<PathBuf>,
+        offline_dir: impl Into<PathBuf>,
+        max_bytes: u64,
+    ) -> Self {
+        self.audio_cache = Some(Arc::new(AudioCache::new(
+            dir.into(),
+            offline_dir.into(),
+            max_bytes,
+        )));
         self
     }
 
@@ -623,22 +633,19 @@ impl Client {
                 None => None,
             };
             let (bytes, gain, fresh) = match cached {
-                Some((bytes, gain)) => {
-                    log::info!("track {track_id}: from the audio cache");
+                Some((bytes, Some(gain))) => {
+                    log::info!("track {track_id}: from disk");
+                    (bytes, Some(gain), false)
+                }
+                // Cached before normalization existed: measure it once now.
+                Some((bytes, None)) => {
+                    let gain = measure_gain(&bytes).await?;
                     (bytes, gain, false)
                 }
                 None => {
-                    let stream = resolve_stream(&yt_dlp, cookies.as_deref(), &track_id).await?;
-                    log::info!("track {track_id}: itag {}", stream.format_id);
-                    (download(&http, &stream).await?, None, true)
-                }
-            };
-            // Measured once per track: new downloads and tracks cached before normalization.
-            let gain = match gain {
-                Some(gain) => Some(gain),
-                None => {
-                    let audio = bytes.clone();
-                    tokio::task::spawn_blocking(move || normalization_gain(&audio)).await?
+                    let (bytes, gain) =
+                        fetch_fresh(&http, &yt_dlp, cookies.as_deref(), &track_id).await?;
+                    (bytes, gain, true)
                 }
             };
             if let Some(cache) = &cache
@@ -648,6 +655,62 @@ impl Client {
                 log::warn!("could not cache {track_id}: {err:#}");
             }
             Ok(Audio { bytes, gain })
+        })
+    }
+
+    /// Keeps a track on disk for offline listening: moved from the cache if it was played,
+    /// downloaded otherwise.
+    pub fn download(&self, track_id: String) -> impl Future<Output = Result<()>> + use<> {
+        let http = self.http.clone();
+        let yt_dlp = self.yt_dlp.clone();
+        let cookies = self.is_signed_in().then(|| self.cookies_path.clone());
+        let cache = self.audio_cache.clone();
+        self.spawn(async move {
+            let cache = cache.context("offline downloads need the audio cache")?;
+            if cache.keep_offline(&track_id).await? {
+                return Ok(());
+            }
+            let (bytes, gain) = fetch_fresh(&http, &yt_dlp, cookies.as_deref(), &track_id).await?;
+            cache.write_offline(&track_id, &bytes, gain).await
+        })
+    }
+
+    /// Stops keeping a track offline.
+    pub fn remove_download(&self, track_id: String) -> impl Future<Output = Result<()>> + use<> {
+        let cache = self.audio_cache.clone();
+        self.spawn(async move {
+            match cache {
+                Some(cache) => cache.remove_offline(&track_id).await,
+                None => Ok(()),
+            }
+        })
+    }
+
+    pub fn is_downloaded(&self, track_id: &str) -> bool {
+        self.audio_cache
+            .as_ref()
+            .is_some_and(|cache| cache.is_offline(track_id))
+    }
+
+    /// The size of the cache of played tracks, without the offline ones.
+    pub fn audio_cache_bytes(&self) -> impl Future<Output = Result<u64>> + use<> {
+        let cache = self.audio_cache.clone();
+        self.spawn(async move {
+            Ok(match cache {
+                Some(cache) => cache.cache_bytes().await,
+                None => 0,
+            })
+        })
+    }
+
+    /// Empties the cache of played tracks; offline tracks stay.
+    pub fn clear_audio_cache(&self) -> impl Future<Output = Result<()>> + use<> {
+        let cache = self.audio_cache.clone();
+        self.spawn(async move {
+            match cache {
+                Some(cache) => cache.clear().await,
+                None => Ok(()),
+            }
         })
     }
 
@@ -723,6 +786,26 @@ struct ResolvedStream {
     url: String,
     user_agent: Option<String>,
     size: Option<u64>,
+}
+
+/// Resolves a track with yt-dlp, downloads it and measures its normalization gain.
+async fn fetch_fresh(
+    http: &reqwest::Client,
+    yt_dlp: &OsString,
+    cookies: Option<&Path>,
+    track_id: &str,
+) -> Result<(Vec<u8>, Option<f32>)> {
+    let stream = resolve_stream(yt_dlp, cookies, track_id).await?;
+    log::info!("track {track_id}: itag {}", stream.format_id);
+    let bytes = download(http, &stream).await?;
+    let gain = measure_gain(&bytes).await?;
+    Ok((bytes, gain))
+}
+
+/// Decodes the whole track to measure it, off the async workers.
+async fn measure_gain(bytes: &[u8]) -> Result<Option<f32>> {
+    let audio = bytes.to_vec();
+    Ok(tokio::task::spawn_blocking(move || normalization_gain(&audio)).await?)
 }
 
 /// Whether a `cookies.txt` holds a signed-in YouTube session (the cookie YouTube signs API
