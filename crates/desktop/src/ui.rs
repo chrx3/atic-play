@@ -5,13 +5,49 @@ use std::path::PathBuf;
 use std::f32::consts::TAU;
 
 use gpui::{
-    AnyElement, App, Div, ElementId, FontWeight, ObjectFit, SharedString, Stateful, StyledImage,
-    Window, div, img, prelude::*, px,
+    AnyElement, App, ClickEvent, Div, ElementId, Entity, FontWeight, ObjectFit, SharedString,
+    Stateful, StyledImage, Window, div, img, prelude::*, px,
 };
-use gpui_m3::{LoadingIndicator, Shape, ShapeName, Spring, Theme, motion};
+use gpui_m3::{IconButton, LoadingIndicator, Shape, ShapeName, Spring, Theme, motion};
+use ytm_core::Track;
+
+use crate::account::Account;
+use crate::assets;
 
 pub fn format_time(total_secs: u64) -> String {
     format!("{}:{:02}", total_secs / 60, total_secs % 60)
+}
+
+/// A heart that likes or unlikes `track`, filled when liked; `None` while signed out.
+pub fn like_button(
+    id: impl Into<ElementId>,
+    track: &Track,
+    account: &Entity<Account>,
+    cx: &App,
+) -> Option<IconButton> {
+    let account_state = account.read(cx);
+    if !account_state.is_signed_in() {
+        return None;
+    }
+    let liked = account_state.is_liked(&track.id);
+    let account = account.clone();
+    let track = track.clone();
+    Some(
+        IconButton::new(
+            id,
+            if liked {
+                assets::HEART_FILL
+            } else {
+                assets::HEART
+            },
+        )
+        .selected(liked)
+        .tooltip(if liked { "Quitar me gusta" } else { "Me gusta" })
+        .on_click(move |_: &ClickEvent, _, cx| {
+            let track = track.clone();
+            account.update(cx, |account, cx| account.toggle_like(track, cx));
+        }),
+    )
 }
 
 /// A square cover, or a tonal placeholder while it downloads.
@@ -44,6 +80,8 @@ pub fn thumbnail(path: Option<PathBuf>, size: f32, radius: f32, cx: &App) -> Any
 pub const CARD_WIDTH: f32 = 180.;
 /// Cover size downloaded for cards (twice the card width for sharp HiDPI rendering).
 pub const CARD_COVER_SIZE: u32 = 320;
+/// Hover group of a [`media_card`], for parts shown only while it is hovered.
+pub const MEDIA_CARD_GROUP: &str = "media-card";
 
 /// A clickable album, artist or song card: artwork, title and an optional subtitle. `busy`
 /// shows a loading indicator over the artwork while its tracks are fetched.
@@ -58,6 +96,7 @@ pub fn media_card(
     let s = *Theme::of(cx);
     div()
         .id(id)
+        .group(MEDIA_CARD_GROUP)
         .w(px(CARD_WIDTH + 24.))
         .p_3()
         .flex()

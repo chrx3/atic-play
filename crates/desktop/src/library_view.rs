@@ -6,6 +6,7 @@ use ytm_core::{Library, Playlist};
 
 use crate::account::{Account, AccountState};
 use crate::covers::Covers;
+use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening};
 use crate::ui::{
@@ -35,6 +36,7 @@ pub struct LibraryView {
     account: Entity<Account>,
     playback: Entity<Playback>,
     covers: Entity<Covers>,
+    navigation: Entity<Navigation>,
     tab: Tab,
     _subscriptions: Vec<Subscription>,
 }
@@ -46,6 +48,7 @@ impl LibraryView {
         account: Entity<Account>,
         playback: Entity<Playback>,
         covers: Entity<Covers>,
+        navigation: Entity<Navigation>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
@@ -57,6 +60,7 @@ impl LibraryView {
             account,
             playback,
             covers,
+            navigation,
             tab: Tab::Playlists,
             _subscriptions: subscriptions,
         }
@@ -113,14 +117,15 @@ impl LibraryView {
                 subtitle.extend(track.duration_secs.map(|secs| format_time(secs.into())));
                 let playback = self.playback.clone();
                 let liked = library.liked.clone();
-                ListItem::new(("liked", index), track.title.clone())
+                let row = ListItem::new(("liked", index), track.title.clone())
                     .subtitle(subtitle.join(" · "))
                     .leading(thumbnail(thumb, 48., 8., cx))
                     // Plays the liked songs from this one on, as YouTube Music does.
                     .on_click(move |_: &ClickEvent, _, cx| {
                         let liked = liked.clone();
                         playback.update(cx, |playback, cx| playback.play_tracks(liked, index, cx));
-                    })
+                    });
+                with_track_menu(row, track, &self.navigation)
             })
             .collect();
         div()
@@ -196,6 +201,7 @@ impl Render for LibraryView {
                             album,
                             &self.covers,
                             &self.playback,
+                            &self.navigation,
                             cx,
                         )
                     })
@@ -213,6 +219,7 @@ impl Render for LibraryView {
                             artist,
                             &self.covers,
                             &self.playback,
+                            &self.navigation,
                             cx,
                         )
                     })

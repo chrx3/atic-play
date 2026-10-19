@@ -2,17 +2,19 @@ use std::future::Future;
 
 use anyhow::Result;
 use gpui::{
-    AnyElement, ClickEvent, Context, Div, Entity, SharedString, Stateful, Subscription, Window,
-    div, prelude::*,
+    AnyElement, App, ClickEvent, Context, Div, Entity, SharedString, Stateful, Subscription,
+    Window, div, prelude::*, px,
 };
-use gpui_m3::{ListItem, Segment, SegmentedButtons, Theme};
+use gpui_m3::{IconButton, ListItem, Segment, SegmentedButtons, Theme};
 use ytm_core::{Album, Artist, Client, Track};
 
+use crate::assets;
 use crate::covers::Covers;
+use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::ui::{
-    CARD_COVER_SIZE, CARD_WIDTH, avatar, compact_count, format_time, media_card, placeholder,
-    section_title, skeleton_cards, skeleton_rows, thumbnail,
+    CARD_COVER_SIZE, CARD_WIDTH, MEDIA_CARD_GROUP, avatar, compact_count, format_time, media_card,
+    placeholder, section_title, skeleton_cards, skeleton_rows, thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -37,6 +39,7 @@ pub struct SearchView {
     client: Client,
     playback: Entity<Playback>,
     covers: Entity<Covers>,
+    navigation: Entity<Navigation>,
     query: SharedString,
     /// Bumped on every search, so slow results of an older query are dropped.
     generation: u64,
@@ -52,6 +55,7 @@ impl SearchView {
         client: Client,
         playback: Entity<Playback>,
         covers: Entity<Covers>,
+        navigation: Entity<Navigation>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
@@ -62,6 +66,7 @@ impl SearchView {
             client,
             playback,
             covers,
+            navigation,
             query: SharedString::default(),
             generation: 0,
             tab: Tab::Songs,
@@ -130,7 +135,14 @@ impl SearchView {
             .iter()
             .enumerate()
             .map(|(index, track)| {
-                track_row(("song", index), track, &self.covers, &self.playback, cx)
+                track_row(
+                    ("song", index),
+                    track,
+                    &self.covers,
+                    &self.playback,
+                    &self.navigation,
+                    cx,
+                )
             })
             .collect();
         div()
@@ -146,7 +158,14 @@ impl SearchView {
             .iter()
             .enumerate()
             .map(|(index, album)| {
-                album_card(("album", index), album, &self.covers, &self.playback, cx)
+                album_card(
+                    ("album", index),
+                    album,
+                    &self.covers,
+                    &self.playback,
+                    &self.navigation,
+                    cx,
+                )
             })
             .collect();
         div()
@@ -162,7 +181,14 @@ impl SearchView {
             .iter()
             .enumerate()
             .map(|(index, artist)| {
-                artist_card(("artist", index), artist, &self.covers, &self.playback, cx)
+                artist_card(
+                    ("artist", index),
+                    artist,
+                    &self.covers,
+                    &self.playback,
+                    &self.navigation,
+                    cx,
+                )
             })
             .collect();
         div()
@@ -290,14 +316,16 @@ pub fn observe_opening<V: 'static>(
     })
 }
 
-/// A song row. Like YouTube Music, clicking plays the song and lets its radio fill the queue.
+/// A song row. Like YouTube Music, clicking plays the song and lets its radio fill the queue;
+/// a right click opens the song menu.
 pub fn track_row<V: 'static>(
     id: impl Into<gpui::ElementId>,
     track: &Track,
     covers: &Entity<Covers>,
     playback: &Entity<Playback>,
+    navigation: &Entity<Navigation>,
     cx: &mut Context<V>,
-) -> ListItem {
+) -> Div {
     let thumb = covers.update(cx, |covers, cx| {
         covers.get(&track.id, track.cover_url.as_deref(), THUMB_SIZE, cx)
     });
@@ -305,21 +333,24 @@ pub fn track_row<V: 'static>(
     subtitle.extend(track.album.clone());
     subtitle.extend(track.duration_secs.map(|secs| format_time(secs.into())));
     let playback = playback.clone();
-    let track = track.clone();
-    ListItem::new(id, track.title.clone())
+    let clicked = track.clone();
+    let row = ListItem::new(id, track.title.clone())
         .subtitle(subtitle.join(" · "))
         .leading(thumbnail(thumb, 48., 8., cx))
         .on_click(move |_: &ClickEvent, _, cx| {
-            let track = track.clone();
+            let track = clicked.clone();
             playback.update(cx, |playback, cx| playback.play_tracks(vec![track], 0, cx));
-        })
+        });
+    with_track_menu(row, track, navigation)
 }
 
+/// An album card: opens the album page; its play button plays the album right away.
 pub fn album_card<V: 'static>(
     id: impl Into<gpui::ElementId>,
     album: &Album,
     covers: &Entity<Covers>,
     playback: &Entity<Playback>,
+    navigation: &Entity<Navigation>,
     cx: &mut Context<V>,
 ) -> Stateful<Div> {
     let cover = covers.update(cx, |covers, cx| {
@@ -330,26 +361,38 @@ pub fn album_card<V: 'static>(
         None => album.artists.clone(),
     };
     let busy = playback.read(cx).opening() == Some(album.id.as_str());
-    let playback = playback.clone();
-    let album_id = album.id.clone();
+    let play = {
+        let playback = playback.clone();
+        let album_id = album.id.clone();
+        move |cx: &mut App| {
+            playback.update(cx, |playback, cx| playback.play_album(album_id.clone(), cx))
+        }
+    };
+    let navigation = navigation.clone();
+    let summary = album.clone();
     media_card(
         id,
-        thumbnail(cover, CARD_WIDTH, 12., cx),
+        card_artwork(thumbnail(cover, CARD_WIDTH, 12., cx), busy, play),
         album.title.clone(),
         Some(subtitle.into()),
         busy,
         cx,
     )
     .on_click(move |_: &ClickEvent, _, cx| {
-        playback.update(cx, |playback, cx| playback.play_album(album_id.clone(), cx));
+        let summary = summary.clone();
+        navigation.update(cx, |navigation, cx| {
+            navigation.open_album(summary.id.clone(), Some(summary), cx)
+        });
     })
 }
 
+/// An artist card: opens the artist page; its play button plays their top songs.
 pub fn artist_card<V: 'static>(
     id: impl Into<gpui::ElementId>,
     artist: &Artist,
     covers: &Entity<Covers>,
     playback: &Entity<Playback>,
+    navigation: &Entity<Navigation>,
     cx: &mut Context<V>,
 ) -> Stateful<Div> {
     let picture = covers.update(cx, |covers, cx| {
@@ -364,11 +407,20 @@ pub fn artist_card<V: 'static>(
         .subscribers
         .map(|count| format!("{} suscriptores", compact_count(count)).into());
     let busy = playback.read(cx).opening() == Some(artist.id.as_str());
-    let playback = playback.clone();
-    let artist_id = artist.id.clone();
+    let play = {
+        let playback = playback.clone();
+        let artist_id = artist.id.clone();
+        move |cx: &mut App| {
+            playback.update(cx, |playback, cx| {
+                playback.play_artist(artist_id.clone(), cx)
+            })
+        }
+    };
+    let navigation = navigation.clone();
+    let summary = artist.clone();
     media_card(
         id,
-        avatar(picture, CARD_WIDTH, cx),
+        card_artwork(avatar(picture, CARD_WIDTH, cx), busy, play),
         artist.name.clone(),
         subtitle,
         busy,
@@ -376,8 +428,38 @@ pub fn artist_card<V: 'static>(
     )
     .items_center()
     .on_click(move |_: &ClickEvent, _, cx| {
-        playback.update(cx, |playback, cx| {
-            playback.play_artist(artist_id.clone(), cx)
+        let summary = summary.clone();
+        navigation.update(cx, |navigation, cx| {
+            navigation.open_artist(summary.id.clone(), Some(summary), cx)
         });
+    })
+}
+
+/// Card artwork with a play button in its corner, shown while the card is hovered.
+fn card_artwork(
+    artwork: impl IntoElement,
+    busy: bool,
+    play: impl Fn(&mut App) + 'static,
+) -> impl IntoElement {
+    div().relative().child(artwork).when(!busy, |artwork| {
+        artwork.child(
+            div()
+                .absolute()
+                .right_2()
+                .bottom_2()
+                .opacity(0.)
+                .group_hover(MEDIA_CARD_GROUP, |style| style.opacity(1.))
+                .child(
+                    IconButton::new("card-play", assets::PLAY)
+                        .filled()
+                        .size(px(44.))
+                        .tooltip("Reproducir")
+                        .on_click(move |_: &ClickEvent, _, cx| {
+                            // The card under it would open the page too.
+                            cx.stop_propagation();
+                            play(cx);
+                        }),
+                ),
+        )
     })
 }

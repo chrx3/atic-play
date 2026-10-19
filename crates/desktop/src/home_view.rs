@@ -5,7 +5,9 @@ use gpui::{
 use gpui_m3::{Button, ListItem, Theme};
 use ytm_core::{Client, HomeFeed, Track};
 
+use crate::account::Account;
 use crate::covers::Covers;
+use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening};
 use crate::ui::{
@@ -23,12 +25,17 @@ enum State {
     Failed(SharedString),
 }
 
-/// The home page without an account: the charts of the listener's country and new releases.
+/// The home page: what the user played lately when signed in, then the charts of the
+/// listener's country and new releases.
 pub struct HomeView {
     client: Client,
     playback: Entity<Playback>,
     covers: Entity<Covers>,
+    navigation: Entity<Navigation>,
     state: State,
+    /// Recently played songs, fetched once per session; `None` while signed out or loading.
+    history: Option<Vec<Track>>,
+    history_requested: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -37,21 +44,100 @@ impl HomeView {
         client: Client,
         playback: Entity<Playback>,
         covers: Entity<Covers>,
+        account: Entity<Account>,
+        navigation: Entity<Navigation>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
             cx.observe(&covers, |_, _, cx| cx.notify()),
             observe_opening(&playback, cx),
+            cx.observe(&account, |this, account, cx| {
+                let signed_in = account.read(cx).is_signed_in();
+                this.follow_session(signed_in, cx);
+            }),
         ];
+        let signed_in = account.read(cx).is_signed_in();
         let mut view = HomeView {
             client,
             playback,
             covers,
+            navigation,
             state: State::Loading,
+            history: None,
+            history_requested: false,
             _subscriptions: subscriptions,
         };
         view.load(cx);
+        view.follow_session(signed_in, cx);
         view
+    }
+
+    /// Fetches the history on signing in and forgets it on signing out.
+    fn follow_session(&mut self, signed_in: bool, cx: &mut Context<Self>) {
+        if !signed_in {
+            if self.history_requested {
+                self.history_requested = false;
+                self.history = None;
+                cx.notify();
+            }
+            return;
+        }
+        if self.history_requested {
+            return;
+        }
+        self.history_requested = true;
+        let history = self.client.history();
+        cx.spawn(async move |this, cx| {
+            let result = history.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(tracks) if this.history_requested => this.history = Some(tracks),
+                    Ok(_) => {}
+                    // The rest of the page still works without it.
+                    Err(err) => log::warn!("could not load the history: {err:#}"),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// "Escuchar de nuevo": recent songs in a row; each plays with its radio after it.
+    fn render_history(&self, tracks: &[Track], cx: &mut Context<Self>) -> AnyElement {
+        let cards: Vec<_> = tracks
+            .iter()
+            .take(MAX_CARDS)
+            .enumerate()
+            .map(|(index, track)| {
+                let cover = self.covers.update(cx, |covers, cx| {
+                    covers.get(&track.id, track.cover_url.as_deref(), CARD_COVER_SIZE, cx)
+                });
+                let playback = self.playback.clone();
+                let clicked = track.clone();
+                let card = media_card(
+                    ("history", index),
+                    thumbnail(cover, CARD_WIDTH, 12., cx),
+                    track.title.clone(),
+                    Some(track.artists.clone().into()),
+                    false,
+                    cx,
+                )
+                .flex_none()
+                .on_click(move |_: &ClickEvent, _, cx| {
+                    let track = clicked.clone();
+                    playback.update(cx, |playback, cx| playback.play_tracks(vec![track], 0, cx));
+                });
+                with_track_menu(card, track, &self.navigation)
+            })
+            .collect();
+        div()
+            .id("history")
+            .overflow_x_scroll()
+            .flex()
+            .gap_2()
+            .children(cards)
+            .into_any_element()
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -95,7 +181,7 @@ impl HomeView {
                 let cover = self.covers.update(cx, |covers, cx| {
                     covers.get(&track.id, track.cover_url.as_deref(), CARD_COVER_SIZE, cx)
                 });
-                media_card(
+                let card = media_card(
                     ("trending", index),
                     thumbnail(cover, CARD_WIDTH, 12., cx),
                     track.title.clone(),
@@ -103,7 +189,8 @@ impl HomeView {
                     false,
                     cx,
                 )
-                .on_click(self.play_list(tracks, index))
+                .on_click(self.play_list(tracks, index));
+                with_track_menu(card, track, &self.navigation)
             })
             .collect();
         div()
@@ -128,7 +215,7 @@ impl HomeView {
                     Some(secs) => format!("{} · {}", track.artists, format_time(secs.into())),
                     None => track.artists.clone(),
                 };
-                ListItem::new(("top", index), track.title.clone())
+                let row = ListItem::new(("top", index), track.title.clone())
                     .subtitle(subtitle)
                     .leading(
                         div()
@@ -145,7 +232,8 @@ impl HomeView {
                             )
                             .child(thumbnail(thumb, 48., 8., cx)),
                     )
-                    .on_click(self.play_list(tracks, index))
+                    .on_click(self.play_list(tracks, index));
+                with_track_menu(row, track, &self.navigation)
             })
             .collect();
         div()
@@ -200,6 +288,12 @@ impl Render for HomeView {
         };
 
         let mut sections: Vec<AnyElement> = Vec::new();
+        if let Some(history) = self.history.clone().filter(|history| !history.is_empty()) {
+            sections.push(section(
+                "Escuchar de nuevo",
+                self.render_history(&history, cx),
+            ));
+        }
         if !feed.trending.is_empty() {
             sections.push(section(
                 "Tendencias",
@@ -221,6 +315,7 @@ impl Render for HomeView {
                         album,
                         &self.covers,
                         &self.playback,
+                        &self.navigation,
                         cx,
                     )
                 })
@@ -247,6 +342,7 @@ impl Render for HomeView {
                         artist,
                         &self.covers,
                         &self.playback,
+                        &self.navigation,
                         cx,
                     )
                 })

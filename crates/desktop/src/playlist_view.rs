@@ -9,6 +9,7 @@ use ytm_core::{Client, Playlist, PlaylistPage, Track};
 
 use crate::assets;
 use crate::covers::Covers;
+use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::ui::{CARD_COVER_SIZE, format_time, placeholder, skeleton_rows, thumbnail};
 
@@ -26,6 +27,7 @@ pub struct PlaylistView {
     client: Client,
     playback: Entity<Playback>,
     covers: Entity<Covers>,
+    navigation: Entity<Navigation>,
     /// What the sidebar or library already knew, shown while the tracks load.
     summary: Option<Playlist>,
     state: State,
@@ -39,6 +41,7 @@ impl PlaylistView {
         client: Client,
         playback: Entity<Playback>,
         covers: Entity<Covers>,
+        navigation: Entity<Navigation>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![cx.observe(&covers, |_, _, cx| cx.notify())];
@@ -46,6 +49,7 @@ impl PlaylistView {
             client,
             playback,
             covers,
+            navigation,
             summary: None,
             state: State::Loading,
             generation: 0,
@@ -97,7 +101,7 @@ impl PlaylistView {
                 });
                 let mut subtitle = vec![track.artists.clone()];
                 subtitle.extend(track.album.clone());
-                ListItem::new(("playlist-track", index), track.title.clone())
+                let row = ListItem::new(("playlist-track", index), track.title.clone())
                     .subtitle(subtitle.join(" · "))
                     .leading(
                         div()
@@ -127,8 +131,8 @@ impl PlaylistView {
                         let tracks = this.tracks().to_vec();
                         this.playback
                             .update(cx, |playback, cx| playback.play_tracks(tracks, index, cx));
-                    }))
-                    .into_any_element()
+                    }));
+                with_track_menu(row, &track, &self.navigation).into_any_element()
             })
             .collect()
     }
