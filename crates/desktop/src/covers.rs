@@ -1,0 +1,60 @@
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+
+use gpui::Context;
+use ytm_core::Client;
+
+/// Cover and avatar files shared by every view. Views observe it to redraw when a download ends.
+pub struct Covers {
+    client: Client,
+    ready: HashMap<String, PathBuf>,
+    pending: HashSet<String>,
+}
+
+impl Covers {
+    pub fn new(client: Client) -> Self {
+        Covers {
+            client,
+            ready: HashMap::new(),
+            pending: HashSet::new(),
+        }
+    }
+
+    /// The cached file for `id` at `size_px`, starting the download on the first request.
+    pub fn get(
+        &mut self,
+        id: &str,
+        url: Option<&str>,
+        size_px: u32,
+        cx: &mut Context<Self>,
+    ) -> Option<PathBuf> {
+        let key = format!("{id}-{size_px}");
+        if let Some(path) = self.ready.get(&key) {
+            return Some(path.clone());
+        }
+        let url = url?;
+        if !self.pending.insert(key.clone()) {
+            return None;
+        }
+
+        let fetch = self
+            .client
+            .fetch_cover(id.to_string(), url.to_string(), size_px);
+        cx.spawn(async move |this, cx| {
+            let result = fetch.await;
+            this.update(cx, |this, cx| match result {
+                Ok(path) => {
+                    this.pending.remove(&key);
+                    this.ready.insert(key, path);
+                    cx.notify();
+                }
+                // The key stays pending so a failed cover is not retried on every frame; the
+                // views show a placeholder instead.
+                Err(err) => log::warn!("cover {key}: {err:#}"),
+            })
+            .ok();
+        })
+        .detach();
+        None
+    }
+}

@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/desktop"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+# Unoptimized GPUI is very slow: optimize dependencies, keep this workspace light.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
+
+# rustypipe 0.11.4 (the latest) with one fix: it understands the header YouTube Music sends for
+# the user's own playlists (see vendor/rustypipe/src/client/response/music_playlist.rs).
+[patch.crates-io]
+rustypipe = { path = "vendor/rustypipe" }

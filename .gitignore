@@ -1,0 +1,8 @@
+/target
+# Local build settings (target dir, a local gpui-m3).
+/.cargo
+# rustypipe writes these next to the binary when no storage dir is set.
+rustypipe_cache.json
+rustypipe_reports/
+# Exported YouTube sessions must never be committed.
+cookies.txt
