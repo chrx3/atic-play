@@ -1,6 +1,7 @@
 //! What Atic-play remembers between runs, in `settings.json` next to the session.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use gpui::{App, Bounds, Global, Pixels, WindowBounds, point, px, size};
 use serde::{Deserialize, Serialize};
@@ -69,6 +70,31 @@ impl SavedBounds {
 struct Store {
     path: PathBuf,
     settings: Settings,
+    pending: Arc<PendingWrite>,
+}
+
+/// The settings waiting to be written, off the UI thread. Only the latest version is kept, and
+/// writes take turns, so the file always ends with the newest settings.
+#[derive(Default)]
+struct PendingWrite {
+    json: Mutex<Option<Vec<u8>>>,
+    writing: Mutex<()>,
+}
+
+impl PendingWrite {
+    fn write(&self, path: &Path) {
+        let _turn = self.writing.lock().unwrap_or_else(|err| err.into_inner());
+        let json = self
+            .json
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .take();
+        if let Some(json) = json
+            && let Err(err) = write_atomically(path, &json)
+        {
+            log::warn!("could not save settings: {err}");
+        }
+    }
 }
 
 impl Global for Store {}
@@ -84,27 +110,78 @@ pub fn init(data_dir: &Path, cx: &mut App) {
                 .ok()
         })
         .unwrap_or_default();
-    cx.set_global(Store { path, settings });
+    let pending = Arc::new(PendingWrite::default());
+    // Whatever is still waiting when the app quits is written before it exits.
+    let quit_path = path.clone();
+    let quit_pending = pending.clone();
+    cx.on_app_quit(move |_| {
+        let path = quit_path.clone();
+        let pending = quit_pending.clone();
+        async move { pending.write(&path) }
+    })
+    .detach();
+    cx.set_global(Store {
+        path,
+        settings,
+        pending,
+    });
 }
 
 pub fn get(cx: &App) -> &Settings {
     &cx.global::<Store>().settings
 }
 
-/// Changes the settings and writes them to disk.
+/// Changes the settings and writes them to disk in the background.
 pub fn update(cx: &mut App, change: impl FnOnce(&mut Settings)) {
     let store = cx.global_mut::<Store>();
     change(&mut store.settings);
-    if let Err(err) = write_json(&store.path, &store.settings) {
-        log::warn!("could not save settings: {err}");
-    }
+    let json = match serde_json::to_vec(&store.settings) {
+        Ok(json) => json,
+        Err(err) => {
+            log::warn!("could not save settings: {err}");
+            return;
+        }
+    };
+    *store
+        .pending
+        .json
+        .lock()
+        .unwrap_or_else(|err| err.into_inner()) = Some(json);
+    let path = store.path.clone();
+    let pending = store.pending.clone();
+    cx.background_executor()
+        .spawn(async move { pending.write(&path) })
+        .detach();
 }
 
 /// Writes `value` as JSON to `path`.
 pub fn write_json(path: &Path, value: &impl Serialize) -> std::io::Result<()> {
-    let json = serde_json::to_string_pretty(value).map_err(std::io::Error::other)?;
-    // Write aside and rename, so a crash mid-write never leaves a broken file.
+    let json = serde_json::to_vec_pretty(value).map_err(std::io::Error::other)?;
+    write_atomically(path, &json)
+}
+
+/// Writes aside and renames, so a crash mid-write never leaves a broken file.
+fn write_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let partial = path.with_extension("json.part");
-    std::fs::write(&partial, json)?;
+    std::fs::write(&partial, contents)?;
     std::fs::rename(&partial, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_latest_pending_settings_are_written() {
+        let dir = std::env::temp_dir().join(format!("atic-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let pending = PendingWrite::default();
+        *pending.json.lock().unwrap() = Some(b"{\"muted\":true}".to_vec());
+        pending.write(&path);
+        // A second write with nothing new leaves the file as it is.
+        pending.write(&path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"muted\":true}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
