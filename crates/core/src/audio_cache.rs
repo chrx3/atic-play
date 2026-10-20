@@ -62,6 +62,11 @@ impl AudioCache {
         Ok(())
     }
 
+    /// Whether the track is on disk, offline or in the cache, without reading it.
+    pub fn contains(&self, track_id: &str) -> bool {
+        self.is_offline(track_id) || file_in(&self.dir, track_id).is_some_and(|path| path.exists())
+    }
+
     pub fn is_offline(&self, track_id: &str) -> bool {
         file_in(&self.offline_dir, track_id).is_some_and(|path| path.exists())
     }

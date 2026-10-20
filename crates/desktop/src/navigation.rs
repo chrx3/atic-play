@@ -1,11 +1,13 @@
 //! Where the user goes from inside a view: album and artist pages, and the song menu.
 
+use std::time::Duration;
+
 use gpui::{
     App, ClickEvent, Context, Div, Entity, EventEmitter, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, Point, Window, div,
+    MouseButton, ParentElement, Pixels, Point, Task, Window, div,
 };
 use gpui_m3::{Menu, MenuItem, context_menu};
-use ytm_core::{Album, Artist, Track};
+use ytm_core::{Album, Artist, Client, Track};
 
 use crate::account::Account;
 use crate::assets;
@@ -24,17 +26,43 @@ pub enum NavigationEvent {
     },
 }
 
+/// How long the pointer rests on a song before its stream is resolved ahead, so passing over a
+/// list does not start yt-dlp for every row.
+const HOVER_WARM_UP_DELAY: Duration = Duration::from_millis(400);
+
 /// Views ask it to open pages (the app listens) and to show the song menu (the app draws it,
 /// on top of everything, so only one is open at a time).
 pub struct Navigation {
+    client: Client,
     track_menu: Option<(Point<Pixels>, Track)>,
+    /// The song under the pointer and the timer that resolves it ahead.
+    hovered: Option<(String, Task<()>)>,
 }
 
 impl EventEmitter<NavigationEvent> for Navigation {}
 
 impl Navigation {
-    pub fn new() -> Self {
-        Navigation { track_menu: None }
+    pub fn new(client: Client) -> Self {
+        Navigation {
+            client,
+            track_menu: None,
+            hovered: None,
+        }
+    }
+
+    /// The pointer is on a song: it is likely to be played, so start resolving it if the pointer
+    /// stays.
+    fn hover_track(&mut self, track_id: &str, cx: &mut Context<Self>) {
+        if self.hovered.as_ref().is_some_and(|(id, _)| id == track_id) {
+            return;
+        }
+        let client = self.client.clone();
+        let id = track_id.to_string();
+        let task = cx.spawn(async move |_, cx| {
+            cx.background_executor().timer(HOVER_WARM_UP_DELAY).await;
+            client.warm_up(id);
+        });
+        self.hovered = Some((track_id.to_string(), task));
     }
 
     pub fn open_album(&mut self, id: String, summary: Option<Album>, cx: &mut Context<Self>) {
@@ -70,7 +98,8 @@ impl Navigation {
     }
 }
 
-/// Wraps a song row so a right click opens the song menu for `track`.
+/// Wraps a song row so a right click opens the song menu for `track`, and resting the pointer
+/// on it gets the song ready to play sooner.
 pub fn with_track_menu(
     row: impl IntoElement,
     track: &Track,
@@ -78,7 +107,12 @@ pub fn with_track_menu(
 ) -> Div {
     let track = track.clone();
     let navigation = navigation.clone();
+    let hover_navigation = navigation.clone();
+    let hover_id = track.id.clone();
     div()
+        .on_mouse_move(move |_, _, cx| {
+            hover_navigation.update(cx, |navigation, cx| navigation.hover_track(&hover_id, cx));
+        })
         .on_mouse_down(MouseButton::Right, move |event, _, cx| {
             let track = track.clone();
             navigation.update(cx, |navigation, cx| {

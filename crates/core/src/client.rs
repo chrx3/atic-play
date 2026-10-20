@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use rustypipe::client::{ClientType, RustyPipe, RustyPipeQuery};
@@ -13,6 +14,7 @@ use rustypipe::model::{
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::runtime::Runtime;
+use tokio::sync::{OnceCell, Semaphore};
 
 use crate::audio_cache::AudioCache;
 use crate::loudness::normalization_gain;
@@ -23,6 +25,10 @@ const CHUNK_SIZE: u64 = 10 * 1024 * 1024;
 /// M4A/AAC formats only, because that is what rodio decodes: 141 (256 kbps, Premium), then 140.
 /// How long yt-dlp may take to resolve a track before it is killed.
 const YT_DLP_TIMEOUT: Duration = Duration::from_secs(60);
+/// Stream URLs last about six hours; one resolved ahead is used for well under that.
+const RESOLUTION_LIFETIME: Duration = Duration::from_secs(60 * 60);
+/// yt-dlp runs at once for tracks resolved ahead (each takes a second or more of CPU).
+const MAX_WARM_UPS: usize = 2;
 /// Attempts per chunk before a download gives up.
 const CHUNK_ATTEMPTS: u32 = 3;
 const AUDIO_FORMAT: &str = "141/140/bestaudio[ext=m4a]";
@@ -291,7 +297,7 @@ pub struct Client {
     runtime: Arc<Runtime>,
     pipe: RustyPipe,
     http: reqwest::Client,
-    yt_dlp: OsString,
+    resolver: Resolver,
     /// The session cookies; they exist only while signed in.
     cookies_path: PathBuf,
     signed_in: Arc<AtomicBool>,
@@ -335,7 +341,7 @@ impl Client {
                 .connect_timeout(Duration::from_secs(10))
                 .read_timeout(Duration::from_secs(30))
                 .build()?,
-            yt_dlp: std::env::var_os("YT_DLP").unwrap_or_else(|| "yt-dlp".into()),
+            resolver: Resolver::new(std::env::var_os("YT_DLP").unwrap_or_else(|| "yt-dlp".into())),
             cookies_path: data_dir.join("cookies.txt"),
             signed_in: Arc::default(),
             audio_cache: None,
@@ -667,7 +673,7 @@ impl Client {
     /// Downloads the best M4A/AAC stream of a track, with its normalization gain.
     pub fn fetch_audio(&self, track_id: String) -> impl Future<Output = Result<Audio>> + use<> {
         let http = self.http.clone();
-        let yt_dlp = self.yt_dlp.clone();
+        let resolver = self.resolver.clone();
         let cookies = self.is_signed_in().then(|| self.cookies_path.clone());
         let cache = self.audio_cache.clone();
         self.spawn(async move {
@@ -687,7 +693,7 @@ impl Client {
                 }
                 None => {
                     let (bytes, gain) =
-                        fetch_fresh(&http, &yt_dlp, cookies.as_deref(), &track_id).await?;
+                        fetch_fresh(&http, &resolver, cookies.as_deref(), &track_id).await?;
                     (bytes, gain, true)
                 }
             };
@@ -701,11 +707,34 @@ impl Client {
         })
     }
 
+    /// Resolves a track's stream URL in the background, so playing it soon after starts sooner:
+    /// yt-dlp takes seconds, and a play request joins a resolution already under way. Does
+    /// nothing for tracks already on disk.
+    pub fn warm_up(&self, track_id: String) {
+        if self
+            .audio_cache
+            .as_ref()
+            .is_some_and(|cache| cache.contains(&track_id))
+        {
+            return;
+        }
+        let resolver = self.resolver.clone();
+        let cookies = self.is_signed_in().then(|| self.cookies_path.clone());
+        self.runtime.spawn(async move {
+            let Ok(_permit) = resolver.warm_ups.acquire().await else {
+                return;
+            };
+            if let Err(err) = resolver.resolve(cookies.as_deref(), &track_id).await {
+                log::debug!("warm-up of {track_id}: {err:#}");
+            }
+        });
+    }
+
     /// Keeps a track on disk for offline listening: moved from the cache if it was played,
     /// downloaded otherwise.
     pub fn download(&self, track_id: String) -> impl Future<Output = Result<()>> + use<> {
         let http = self.http.clone();
-        let yt_dlp = self.yt_dlp.clone();
+        let resolver = self.resolver.clone();
         let cookies = self.is_signed_in().then(|| self.cookies_path.clone());
         let cache = self.audio_cache.clone();
         self.spawn(async move {
@@ -713,7 +742,8 @@ impl Client {
             if cache.keep_offline(&track_id).await? {
                 return Ok(());
             }
-            let (bytes, gain) = fetch_fresh(&http, &yt_dlp, cookies.as_deref(), &track_id).await?;
+            let (bytes, gain) =
+                fetch_fresh(&http, &resolver, cookies.as_deref(), &track_id).await?;
             cache.write_offline(&track_id, &bytes, gain).await
         })
     }
@@ -824,6 +854,7 @@ fn sized_cover_url(url: &str, size_px: u32) -> String {
     }
 }
 
+#[derive(Clone)]
 struct ResolvedStream {
     format_id: String,
     url: String,
@@ -831,18 +862,107 @@ struct ResolvedStream {
     size: Option<u64>,
 }
 
+/// Stream URLs from yt-dlp, each resolved once and shared: a play request joins a warm-up
+/// already under way instead of starting yt-dlp again.
+#[derive(Clone)]
+struct Resolver {
+    yt_dlp: OsString,
+    resolutions: Arc<Mutex<HashMap<String, Resolution>>>,
+    warm_ups: Arc<Semaphore>,
+}
+
+struct Resolution {
+    started: Instant,
+    stream: Arc<OnceCell<ResolvedStream>>,
+}
+
+impl Resolver {
+    fn new(yt_dlp: OsString) -> Self {
+        Resolver {
+            yt_dlp,
+            resolutions: Arc::default(),
+            warm_ups: Arc::new(Semaphore::new(MAX_WARM_UPS)),
+        }
+    }
+
+    async fn resolve(&self, cookies: Option<&Path>, track_id: &str) -> Result<ResolvedStream> {
+        let key = resolution_key(cookies, track_id);
+        let stream = {
+            let mut resolutions = self
+                .resolutions
+                .lock()
+                .unwrap_or_else(|err| err.into_inner());
+            resolutions.retain(|_, resolution| resolution.started.elapsed() < RESOLUTION_LIFETIME);
+            resolutions
+                .entry(key)
+                .or_insert_with(|| Resolution {
+                    started: Instant::now(),
+                    stream: Arc::default(),
+                })
+                .stream
+                .clone()
+        };
+        // A failed resolution is not kept, so the next request tries again.
+        let stream = stream
+            .get_or_try_init(|| resolve_stream(&self.yt_dlp, cookies, track_id))
+            .await?;
+        Ok(stream.clone())
+    }
+
+    /// Drops a resolved URL that stopped working, so the next request resolves it again.
+    fn forget(&self, cookies: Option<&Path>, track_id: &str) {
+        let key = resolution_key(cookies, track_id);
+        self.resolutions
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .remove(&key);
+    }
+}
+
+/// Signed in and signed out resolutions differ (Premium formats), so they are kept apart.
+fn resolution_key(cookies: Option<&Path>, track_id: &str) -> String {
+    format!("{}:{track_id}", cookies.is_some())
+}
+
 /// Resolves a track with yt-dlp, downloads it and measures its normalization gain.
 async fn fetch_fresh(
     http: &reqwest::Client,
-    yt_dlp: &OsString,
+    resolver: &Resolver,
     cookies: Option<&Path>,
     track_id: &str,
 ) -> Result<(Vec<u8>, Option<f32>)> {
-    let stream = resolve_stream(yt_dlp, cookies, track_id).await?;
-    log::info!("track {track_id}: itag {}", stream.format_id);
-    let bytes = download(http, &stream).await?;
+    let started = Instant::now();
+    let stream = resolver.resolve(cookies, track_id).await?;
+    log::info!(
+        "track {track_id}: itag {} after {:.1}s",
+        stream.format_id,
+        started.elapsed().as_secs_f32()
+    );
+    let bytes = match download(http, &stream).await {
+        Ok(bytes) => bytes,
+        // A URL resolved ahead may have been refused (expired, or tied to another session):
+        // resolve it once more.
+        Err(err) if is_forbidden(&err) => {
+            log::info!("track {track_id}: stream URL refused, resolving again");
+            resolver.forget(cookies, track_id);
+            let stream = resolver.resolve(cookies, track_id).await?;
+            download(http, &stream).await?
+        }
+        Err(err) => {
+            resolver.forget(cookies, track_id);
+            return Err(err);
+        }
+    };
     let gain = measure_gain(&bytes).await?;
+    // Each URL is downloaded once; replays come from the disk cache.
+    resolver.forget(cookies, track_id);
     Ok((bytes, gain))
+}
+
+fn is_forbidden(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<reqwest::Error>()
+        .and_then(reqwest::Error::status)
+        .is_some_and(|status| status == reqwest::StatusCode::FORBIDDEN)
 }
 
 /// Decodes the whole track to measure it, off the async workers.

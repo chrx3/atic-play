@@ -119,7 +119,7 @@ impl YtmApp {
         let covers = cx.new(|_| Covers::new(client.clone()));
         let account = cx.new(|cx| Account::new(client.clone(), data_dir, cx));
         let playback = cx.new(|cx| Playback::new(client.clone(), cx));
-        let navigation = cx.new(|_| Navigation::new());
+        let navigation = cx.new(|_| Navigation::new(client.clone()));
         let library_view = cx.new(|cx| {
             LibraryView::new(
                 account.clone(),
