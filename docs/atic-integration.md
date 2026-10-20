@@ -7,7 +7,7 @@ reproductor propio.
 
 Repos:
 
-- **Atic-play**: `C:\dev\ytm-player` (Rust + GPUI).
+- **Atic-play**: este repositorio (Rust + GPUI).
 - **Atic**: [chrx3/atic](https://github.com/chrx3/atic).
   La pill nativa está en `prototypes/pill-gpui` (GPUI, solo Windows); su Ahora
   suena es `src/media.rs`, y las letras están en `src/media/lyrics.rs`.

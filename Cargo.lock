@@ -2988,6 +2988,7 @@ dependencies = [
 [[package]]
 name = "gpui-m3"
 version = "0.1.0"
+source = "git+https://github.com/chrx3/gpui-m3?rev=954d6e83437fe97766ded811a4aaa2c2dc13b363#954d6e83437fe97766ded811a4aaa2c2dc13b363"
 dependencies = [
  "gpui",
  "image",

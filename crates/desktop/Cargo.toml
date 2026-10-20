@@ -17,9 +17,11 @@ anyhow = "1"
 # Logs to the console; `RUST_LOG` picks what is shown.
 env_logger = "0.11"
 gpui = "0.2.2"
-# Local checkout, so the library can evolve with the app. Switch to `gpui-m3 = "0.1"` to build
-# from crates.io.
-gpui-m3 = { path = "../gpui-m3" }
+# From its repository, pinned. To work on it alongside the app, point this at a local checkout
+# in `.cargo/config.toml` (not committed):
+#   [patch."https://github.com/chrx3/gpui-m3"]
+#   gpui-m3 = { path = "../gpui-m3" }
+gpui-m3 = { git = "https://github.com/chrx3/gpui-m3", rev = "954d6e83437fe97766ded811a4aaa2c2dc13b363" }
 # Same versions gpui-m3 uses; the `image` feature extracts the seed color from covers.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 log = "0.4"
