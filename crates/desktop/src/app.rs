@@ -6,12 +6,13 @@ use gpui::{
     MouseButton, NavigationDirection, StyleRefinement, Subscription, Window, div, prelude::*, px,
 };
 use gpui_m3::{IconButton, Segment, SegmentedButtons, Spring, Theme, Toast, animate_theme, motion};
-use ytm_core::{Album, Artist, Client, Playlist};
+use ytm_core::{Album, Artist, Client, Genre, Playlist};
 
 use crate::account::{Account, AccountEvent};
 use crate::album_view::AlbumView;
 use crate::artist_view::ArtistView;
 use crate::covers::Covers;
+use crate::explore_view::{ExploreEvent, ExploreView};
 use crate::history_view::HistoryView;
 use crate::home_view::HomeView;
 use crate::library_view::{LibraryEvent, LibraryView};
@@ -58,6 +59,7 @@ enum Page {
     Playlist(Playlist),
     Album { id: String, summary: Option<Album> },
     Artist { id: String, summary: Option<Artist> },
+    Genre(Genre),
 }
 
 impl Page {
@@ -67,6 +69,7 @@ impl Page {
             (Page::Playlist(a), Page::Playlist(b)) => a.id == b.id,
             (Page::Album { id: a, .. }, Page::Album { id: b, .. })
             | (Page::Artist { id: a, .. }, Page::Artist { id: b, .. }) => a == b,
+            (Page::Genre(a), Page::Genre(b)) => a.id == b.id,
             _ => false,
         }
     }
@@ -96,6 +99,7 @@ pub struct YtmApp {
     home_view: Entity<HomeView>,
     search_view: Entity<SearchView>,
     library_view: Entity<LibraryView>,
+    explore_view: Entity<ExploreView>,
     history_view: Entity<HistoryView>,
     playlist_view: Entity<PlaylistView>,
     album_view: Entity<AlbumView>,
@@ -182,6 +186,7 @@ impl YtmApp {
         let history_view =
             cx.new(|cx| HistoryView::new(playback.clone(), covers.clone(), navigation.clone(), cx));
         let settings_view = cx.new(|cx| SettingsView::new(client.clone(), account.clone(), cx));
+        let explore_view = cx.new(|cx| ExploreView::new(client.clone(), covers.clone(), cx));
         let queue_panel =
             cx.new(|cx| QueuePanel::new(playback.clone(), covers.clone(), navigation.clone(), cx));
         let lyrics_panel = cx.new(|cx| LyricsPanel::new(playback.clone(), cx));
@@ -262,6 +267,15 @@ impl YtmApp {
                     }
                 },
             ),
+            cx.subscribe(
+                &explore_view,
+                |this, _, event: &ExploreEvent, cx| match event {
+                    ExploreEvent::OpenGenre(genre) => this.visit(Page::Genre(genre.clone()), cx),
+                    ExploreEvent::OpenPlaylist(playlist) => {
+                        this.visit(Page::Playlist(playlist.clone()), cx)
+                    }
+                },
+            ),
             cx.subscribe(&account, |this, _, event: &AccountEvent, cx| {
                 if let AccountEvent::PlaylistDeleted(id) = event {
                     this.playlist_deleted(id, cx);
@@ -327,6 +341,7 @@ impl YtmApp {
             home_view,
             search_view,
             library_view,
+            explore_view: explore_view.clone(),
             history_view,
             playlist_view,
             album_view,
@@ -374,7 +389,18 @@ impl YtmApp {
 
     fn show(&mut self, page: Page, cx: &mut Context<Self>) {
         match page {
-            Page::Route(route) => self.navigate(route, cx),
+            Page::Route(route) => {
+                if route == Route::Explore {
+                    self.explore_view
+                        .update(cx, |view, cx| view.show_genres(cx));
+                }
+                self.navigate(route, cx)
+            }
+            Page::Genre(genre) => {
+                self.navigate(Route::Genre, cx);
+                self.explore_view
+                    .update(cx, |view, cx| view.open_genre(genre, cx));
+            }
             Page::Playlist(playlist) => self.open_playlist(playlist, cx),
             Page::Album { id, summary } => {
                 self.navigate(Route::Album, cx);
@@ -439,7 +465,7 @@ impl YtmApp {
     /// Shows `route`, leaving "Reproduciendo" if it is open.
     fn navigate(&mut self, route: Route, cx: &mut Context<Self>) {
         // Album and artist pages replace each other under the same route: each is a new page.
-        if route != self.route || matches!(route, Route::Album | Route::Artist) {
+        if route != self.route || matches!(route, Route::Album | Route::Artist | Route::Genre) {
             self.page_generation += 1;
         }
         if route != self.route {
@@ -497,7 +523,7 @@ impl YtmApp {
         let view = match self.route {
             Route::Search => Some(AnyView::from(self.search_view.clone())),
             Route::Home => Some(AnyView::from(self.home_view.clone())),
-            Route::Explore => None,
+            Route::Explore | Route::Genre => Some(AnyView::from(self.explore_view.clone())),
             Route::Library => Some(AnyView::from(self.library_view.clone())),
             Route::History => Some(AnyView::from(self.history_view.clone())),
             Route::Playlist => Some(AnyView::from(self.playlist_view.clone())),

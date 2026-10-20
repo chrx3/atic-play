@@ -165,6 +165,29 @@ pub struct PlaylistPage {
     pub tracks: Vec<Track>,
 }
 
+/// A genre or mood of YouTube Music's "Explore", with the color of its button.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Genre {
+    pub id: String,
+    pub name: String,
+    pub is_mood: bool,
+    /// `0xRRGGBB`.
+    pub color: u32,
+}
+
+/// A genre's page: playlists in named sections.
+#[derive(Debug, Clone, Default)]
+pub struct GenrePage {
+    pub name: String,
+    pub sections: Vec<GenreSection>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GenreSection {
+    pub name: String,
+    pub playlists: Vec<Playlist>,
+}
+
 /// Who is signed in, as YouTube Music's account menu shows it.
 #[derive(Debug, Clone)]
 pub struct AccountInfo {
@@ -715,6 +738,43 @@ impl Client {
                 .raw(ClientType::DesktopMusic, endpoint, &body)
                 .await?;
             Ok(())
+        })
+    }
+
+    /// The genres and moods of YouTube Music's "Explore".
+    pub fn genres(&self) -> impl Future<Output = Result<Vec<Genre>>> + use<> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move {
+            let genres = pipe.query().music_genres().await?;
+            Ok(genres
+                .into_iter()
+                .map(|genre| Genre {
+                    id: genre.id,
+                    name: genre.name,
+                    is_mood: genre.is_mood,
+                    color: genre.color & 0x00FF_FFFF,
+                })
+                .collect())
+        })
+    }
+
+    /// The playlists YouTube Music shows for a genre or mood.
+    pub fn genre(&self, genre_id: String) -> impl Future<Output = Result<GenrePage>> + use<> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move {
+            let genre = pipe.query().music_genre(&genre_id).await?;
+            Ok(GenrePage {
+                name: genre.name,
+                sections: genre
+                    .sections
+                    .into_iter()
+                    .filter(|section| !section.playlists.is_empty())
+                    .map(|section| GenreSection {
+                        name: section.name,
+                        playlists: section.playlists.into_iter().map(Playlist::from).collect(),
+                    })
+                    .collect(),
+            })
         })
     }
 

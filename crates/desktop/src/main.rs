@@ -7,6 +7,7 @@ mod audio_wave;
 mod covers;
 mod download_ui;
 mod downloads;
+mod explore_view;
 mod google_sign_in;
 mod history;
 mod history_view;
