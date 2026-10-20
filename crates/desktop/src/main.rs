@@ -69,6 +69,28 @@ fn local_dir(data_dir: &Path) -> PathBuf {
         .unwrap_or_else(|| data_dir.to_path_buf())
 }
 
+/// The id Windows knows the app by: the media session shows it as the source (Atic's "Ahora
+/// suena" names it "Atic-play" from it), and the taskbar groups the windows with it. Without
+/// one, Windows makes one up from the executable.
+const APP_USER_MODEL_ID: &str = "Ciat.AticPlay";
+
+#[cfg(windows)]
+fn set_app_id() {
+    #[link(name = "shell32")]
+    unsafe extern "system" {
+        fn SetCurrentProcessExplicitAppUserModelID(app_id: *const u16) -> i32;
+    }
+    let app_id: Vec<u16> = APP_USER_MODEL_ID.encode_utf16().chain([0]).collect();
+    // SAFETY: a NUL-terminated UTF-16 string that outlives the call; Windows copies it.
+    let result = unsafe { SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr()) };
+    if result < 0 {
+        log::warn!("could not set the app id ({result:#x})");
+    }
+}
+
+#[cfg(not(windows))]
+fn set_app_id() {}
+
 fn main() -> ExitCode {
     // Our own crates log what they do (cached or downloaded, itag, errors); dependencies only
     // warnings. rustypipe is off: it marks every request's tracing span at error level, which
@@ -79,6 +101,8 @@ fn main() -> ExitCode {
             .default_filter_or("warn,rustypipe=off,tracing::span=off,atic_play=info,ytm_core=info"),
     )
     .init();
+
+    set_app_id();
 
     let args: Vec<_> = std::env::args_os().collect();
     if args.get(1).is_some_and(|arg| arg == google_sign_in::ARG) {
