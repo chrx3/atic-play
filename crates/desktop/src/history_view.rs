@@ -11,7 +11,8 @@ use crate::covers::Covers;
 use crate::history::History;
 use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
-use crate::ui::{placeholder, section_title, thumbnail};
+use crate::search_view::observe_opening;
+use crate::ui::{mark_playing, placeholder, section_title, thumbnail};
 
 const THUMB_SIZE: u32 = 120;
 /// Day headings and songs share the list's row height.
@@ -45,6 +46,8 @@ impl HistoryView {
         let history = History::global(cx);
         let subscriptions = vec![
             cx.observe(&covers, |_, _, cx| cx.notify()),
+            // The mark on the song playing now.
+            observe_opening(&playback, cx),
             cx.observe(&history, |this, _, cx| {
                 this.rows = rows(&this.history, cx);
                 cx.notify();
@@ -72,6 +75,14 @@ impl HistoryView {
     fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let s = *Theme::of(cx);
         let offset = local_offset();
+        // A song played several times is marked once, on its latest play.
+        let playing_entry = self.playback.read(cx).current().and_then(|current| {
+            self.history
+                .read(cx)
+                .entries()
+                .iter()
+                .position(|entry| entry.track.id == current.id)
+        });
         range
             .map(|index| {
                 let row = match &self.rows[index] {
@@ -86,8 +97,9 @@ impl HistoryView {
                         .text_color(s.on_surface_variant)
                         .child(label.clone())
                         .into_any_element(),
-                    Row::Play(entry) => {
-                        let entry = self.history.read(cx).entries()[*entry].clone();
+                    Row::Play(entry_index) => {
+                        let playing = playing_entry == Some(*entry_index);
+                        let entry = self.history.read(cx).entries()[*entry_index].clone();
                         let track = entry.track;
                         let thumb = self.covers.update(cx, |covers, cx| {
                             covers.get(&track.id, track.cover_url.as_deref(), THUMB_SIZE, cx)
@@ -111,7 +123,8 @@ impl HistoryView {
                                     playback.play_tracks(vec![track], 0, cx)
                                 });
                             });
-                        with_track_menu(item, &track, &self.navigation).into_any_element()
+                        mark_playing(with_track_menu(item, &track, &self.navigation), playing, cx)
+                            .into_any_element()
                     }
                 };
                 div().h(px(ROW_HEIGHT)).child(row).into_any_element()
