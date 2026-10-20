@@ -28,8 +28,8 @@ use crate::search_view::SearchView;
 use crate::settings;
 use crate::settings_view::{SettingsEvent, SettingsView};
 use crate::shortcuts::{
-    self, Close, CycleRepeat, GoBack, NextTrack, PreviousTrack, SeekBackward, SeekForward,
-    ToggleMute, TogglePlay, ToggleShuffle, VolumeDown, VolumeUp,
+    self, Close, CycleRepeat, FocusSearch, GoBack, NextTrack, PreviousTrack, SeekBackward,
+    SeekForward, ToggleMute, TogglePlay, ToggleShuffle, VolumeDown, VolumeUp,
 };
 use crate::sidebar::{Route, Sidebar};
 use crate::sign_in::SignInDialog;
@@ -719,6 +719,11 @@ impl Render for YtmApp {
             }))
             .on_action(cx.listener(|this, _: &GoBack, _, cx| this.go_back(cx)))
             .on_action(cx.listener(|this, _: &Close, _, cx| this.close(cx)))
+            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+                // The search field is not on screen behind "Reproduciendo".
+                this.set_now_playing_open(false, cx);
+                this.search_box.read(cx).focus(window, cx);
+            }))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, _, cx| this.go_back(cx)),

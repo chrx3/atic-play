@@ -22,6 +22,7 @@ actions!(
         CycleRepeat,
         GoBack,
         Close,
+        FocusSearch,
     ]
 );
 
@@ -40,7 +41,9 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new("r", CycleRepeat, ctx),
         KeyBinding::new("backspace", GoBack, ctx),
         KeyBinding::new("escape", Close, ctx),
+        KeyBinding::new("/", FocusSearch, ctx),
         // Going back works from anywhere, as in a browser.
         KeyBinding::new("alt-left", GoBack, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-f", FocusSearch, Some(KEY_CONTEXT)),
     ]);
 }

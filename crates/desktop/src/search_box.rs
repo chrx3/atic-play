@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use gpui::{
-    Context, Corner, Entity, EventEmitter, SharedString, Subscription, Task, Window, div,
+    App, Context, Corner, Entity, EventEmitter, SharedString, Subscription, Task, Window, div,
     prelude::*, relative,
 };
 use gpui_m3::{
@@ -208,6 +208,11 @@ impl SearchBox {
                 });
             }
         }
+    }
+
+    /// Puts the cursor in the search field (Ctrl+F).
+    pub fn focus(&self, window: &mut Window, cx: &App) {
+        self.field.read(cx).focus(window);
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
