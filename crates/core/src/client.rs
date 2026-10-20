@@ -14,6 +14,7 @@ use rustypipe::model::traits::FromYtItem;
 use rustypipe::model::{
     AlbumItem, ArtistId, ArtistItem, MusicItem, MusicPlaylistItem, Thumbnail, TrackItem, VideoItem,
 };
+use rustypipe::param::Language;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::runtime::Runtime;
@@ -425,7 +426,12 @@ impl Client {
             .worker_threads(2)
             .enable_all()
             .build()?;
-        let pipe = RustyPipe::builder().storage_dir(&data_dir).build()?;
+        // Genres, chart titles and other text YouTube writes come in Latin American Spanish, like
+        // the app. The country is left to YouTube, which goes by the IP.
+        let pipe = RustyPipe::builder()
+            .storage_dir(&data_dir)
+            .lang(Language::Es419)
+            .build()?;
         Ok(Client {
             runtime: Arc::new(runtime),
             pipe,
