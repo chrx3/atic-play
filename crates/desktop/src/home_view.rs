@@ -11,8 +11,8 @@ use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening};
 use crate::ui::{
-    CARD_COVER_SIZE, CARD_WIDTH, format_time, friendly_error, media_card, placeholder,
-    section_title, skeleton, skeleton_cards, skeleton_rows, thumbnail,
+    CARD_COVER_SIZE, CARD_WIDTH, format_time, friendly_error, is_current_track, mark_playing,
+    media_card, placeholder, section_title, skeleton, skeleton_cards, skeleton_rows, thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -233,7 +233,8 @@ impl HomeView {
                             .child(thumbnail(thumb, 48., 8., cx)),
                     )
                     .on_click(self.play_list(tracks, index));
-                with_track_menu(row, track, &self.navigation)
+                let playing = is_current_track(&self.playback, &track.id, cx);
+                mark_playing(with_track_menu(row, track, &self.navigation), playing, cx)
             })
             .collect();
         div()

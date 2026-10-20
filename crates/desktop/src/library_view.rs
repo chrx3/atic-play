@@ -12,8 +12,8 @@ use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening};
 use crate::ui::{
-    CARD_COVER_SIZE, CARD_WIDTH, format_time, media_card, placeholder, section_title,
-    skeleton_rows, thumbnail,
+    CARD_COVER_SIZE, CARD_WIDTH, format_time, is_current_track, mark_playing, media_card,
+    placeholder, section_title, skeleton_rows, thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -141,7 +141,8 @@ impl LibraryView {
                         let liked = liked.clone();
                         playback.update(cx, |playback, cx| playback.play_tracks(liked, index, cx));
                     });
-                with_track_menu(row, track, &self.navigation)
+                let playing = is_current_track(&self.playback, &track.id, cx);
+                mark_playing(with_track_menu(row, track, &self.navigation), playing, cx)
             })
             .collect();
         div()

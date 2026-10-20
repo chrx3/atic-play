@@ -19,8 +19,8 @@ use crate::playback::Playback;
 use crate::toasts;
 use crate::ui::{
     CARD_COVER_SIZE, CARD_WIDTH, MEDIA_CARD_GROUP, avatar, compact_count, format_time,
-    friendly_error, media_card, placeholder, section_title, skeleton_cards, skeleton_rows,
-    thumbnail,
+    friendly_error, is_current_track, mark_playing, media_card, placeholder, section_title,
+    skeleton_cards, skeleton_rows, thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -412,16 +412,21 @@ fn status<T>(load: &Load<T>, tab: Tab, cx: &mut Context<SearchView>) -> AnyEleme
         .into_any_element()
 }
 
-/// Redraws a view when an album or artist starts or stops loading, not on every progress tick.
+/// Redraws a view when an album or artist starts or stops loading, or another song starts
+/// (its row is marked), not on every progress tick.
 pub fn observe_opening<V: 'static>(
     playback: &Entity<Playback>,
     cx: &mut Context<V>,
 ) -> Subscription {
-    let mut last_opening = None;
+    let mut last_seen = None;
     cx.observe(playback, move |_, playback, cx| {
-        let opening = playback.read(cx).opening().map(str::to_string);
-        if opening != last_opening {
-            last_opening = opening;
+        let playback = playback.read(cx);
+        let seen = (
+            playback.opening().map(str::to_string),
+            playback.current().map(|track| track.id.clone()),
+        );
+        if last_seen.as_ref() != Some(&seen) {
+            last_seen = Some(seen);
             cx.notify();
         }
     })
@@ -443,6 +448,7 @@ pub fn track_row<V: 'static>(
     let mut subtitle = vec![track.artists.clone()];
     subtitle.extend(track.album.clone());
     subtitle.extend(track.duration_secs.map(|secs| format_time(secs.into())));
+    let playing = is_current_track(playback, &track.id, cx);
     let playback = playback.clone();
     let clicked = track.clone();
     let id = id.into();
@@ -460,7 +466,7 @@ pub fn track_row<V: 'static>(
             let track = clicked.clone();
             playback.update(cx, |playback, cx| playback.play_tracks(vec![track], 0, cx));
         });
-    with_track_menu(row, track, navigation)
+    mark_playing(with_track_menu(row, track, navigation), playing, cx)
 }
 
 /// An album card: opens the album page; its play button plays the album right away.

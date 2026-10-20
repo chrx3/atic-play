@@ -13,8 +13,10 @@ use crate::download_ui::{download_button, downloaded_mark};
 use crate::downloads::Downloads;
 use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
+use crate::search_view::observe_opening;
 use crate::ui::{
-    CARD_COVER_SIZE, failed, format_time, friendly_error, skeleton, skeleton_rows, thumbnail,
+    CARD_COVER_SIZE, failed, format_time, friendly_error, is_current_track, mark_playing, skeleton,
+    skeleton_rows, thumbnail,
 };
 
 const COVER_WIDTH: f32 = 200.;
@@ -52,6 +54,7 @@ impl AlbumView {
     ) -> Self {
         let downloads = Downloads::global(cx);
         let subscriptions = vec![
+            observe_opening(&playback, cx),
             cx.observe(&covers, |_, _, cx| cx.notify()),
             // Download progress and the marks on downloaded songs.
             cx.observe(&downloads, |_, _, cx| cx.notify()),
@@ -147,7 +150,9 @@ impl AlbumView {
                         this.playback
                             .update(cx, |playback, cx| playback.play_tracks(tracks, index, cx));
                     }));
-                with_track_menu(row, &track, &self.navigation).into_any_element()
+                let playing = is_current_track(&self.playback, &track.id, cx);
+                mark_playing(with_track_menu(row, &track, &self.navigation), playing, cx)
+                    .into_any_element()
             })
             .collect()
     }

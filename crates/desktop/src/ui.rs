@@ -13,6 +13,7 @@ use ytm_core::Track;
 
 use crate::account::Account;
 use crate::assets;
+use crate::playback::Playback;
 
 pub fn format_time(total_secs: u64) -> String {
     format!("{}:{:02}", total_secs / 60, total_secs % 60)
@@ -75,6 +76,36 @@ pub fn thumbnail(path: Option<PathBuf>, size: f32, radius: f32, cx: &App) -> Any
             .bg(Theme::of(cx).surface_container_highest)
             .into_any_element(),
     }
+}
+
+/// Whether `track_id` is the song playing (or loaded in the player).
+pub fn is_current_track(playback: &Entity<Playback>, track_id: &str, cx: &App) -> bool {
+    playback
+        .read(cx)
+        .current()
+        .is_some_and(|current| current.id == track_id)
+}
+
+/// Marks the row of the song that is playing: a tint of the accent color and a bar at its
+/// start. Static on purpose, so long lists do not redraw every frame.
+pub fn mark_playing(row: Div, playing: bool, cx: &App) -> Div {
+    if !playing {
+        return row;
+    }
+    let s = Theme::of(cx);
+    row.relative()
+        .rounded(px(12.))
+        .bg(gpui_m3::theme::alpha(s.primary, 0.12))
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .top(px(12.))
+                .bottom(px(12.))
+                .w(px(4.))
+                .rounded_full()
+                .bg(s.primary),
+        )
 }
 
 pub const CARD_WIDTH: f32 = 180.;

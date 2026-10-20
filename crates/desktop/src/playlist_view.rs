@@ -15,8 +15,10 @@ use crate::downloads::Downloads;
 use crate::navigation::{Navigation, with_playlist_track_menu};
 use crate::playback::Playback;
 use crate::playlist_dialog::PlaylistDialogMode;
+use crate::search_view::observe_opening;
 use crate::ui::{
-    CARD_COVER_SIZE, failed, format_time, friendly_error, placeholder, skeleton_rows, thumbnail,
+    CARD_COVER_SIZE, failed, format_time, friendly_error, is_current_track, mark_playing,
+    placeholder, skeleton_rows, thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -56,6 +58,7 @@ impl PlaylistView {
         let downloads = Downloads::global(cx);
         let subscriptions = vec![
             cx.observe(&covers, |_, _, cx| cx.notify()),
+            observe_opening(&playback, cx),
             // Whether the playlist is the user's own (rename, delete, take songs out).
             cx.observe(&account, |_, _, cx| cx.notify()),
             // Show a change made to this playlist.
@@ -175,8 +178,10 @@ impl PlaylistView {
                         this.playback
                             .update(cx, |playback, cx| playback.play_tracks(tracks, index, cx));
                     }));
-                with_playlist_track_menu(row, &track, self.summary.as_ref(), &self.navigation)
-                    .into_any_element()
+                let playing = is_current_track(&self.playback, &track.id, cx);
+                let row =
+                    with_playlist_track_menu(row, &track, self.summary.as_ref(), &self.navigation);
+                mark_playing(row, playing, cx).into_any_element()
             })
             .collect()
     }
