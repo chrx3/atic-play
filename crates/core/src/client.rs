@@ -165,6 +165,14 @@ pub struct PlaylistPage {
     pub tracks: Vec<Track>,
 }
 
+/// Who is signed in, as YouTube Music's account menu shows it.
+#[derive(Debug, Clone)]
+pub struct AccountInfo {
+    pub name: String,
+    pub handle: Option<String>,
+    pub photo_url: Option<String>,
+}
+
 /// What the signed-in user has saved, for the library and the sidebar.
 #[derive(Debug, Clone, Default)]
 pub struct Library {
@@ -707,6 +715,23 @@ impl Client {
                 .raw(ClientType::DesktopMusic, endpoint, &body)
                 .await?;
             Ok(())
+        })
+    }
+
+    /// The signed-in user's name and picture. Requires a session.
+    pub fn account_info(&self) -> impl Future<Output = Result<AccountInfo>> + use<> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move {
+            let response = pipe
+                .query()
+                .authenticated()
+                .raw(
+                    ClientType::DesktopMusic,
+                    "account/account_menu",
+                    &serde_json::json!({}),
+                )
+                .await?;
+            parse_account_info(&response)
         })
     }
 
@@ -1368,6 +1393,23 @@ fn parse_editable_playlists(response: &str) -> Result<Vec<Playlist>> {
         .collect())
 }
 
+/// The account header of YouTube Music's account menu.
+fn parse_account_info(response: &str) -> Result<AccountInfo> {
+    let response: serde_json::Value = serde_json::from_str(response)?;
+    let header = &response["actions"][0]["openPopupAction"]["popup"]["multiPageMenuRenderer"]["header"]
+        ["activeAccountHeaderRenderer"];
+    let name = text_of(&header["accountName"]).context("YouTube Music sent no account name")?;
+    Ok(AccountInfo {
+        name,
+        handle: text_of(&header["channelHandle"]),
+        photo_url: header["accountPhoto"]["thumbnails"]
+            .as_array()
+            .and_then(|thumbnails| thumbnails.last())
+            .and_then(|thumbnail| thumbnail["url"].as_str())
+            .map(str::to_string),
+    })
+}
+
 /// The text of a YouTube `simpleText` or `runs` object.
 fn text_of(text: &serde_json::Value) -> Option<String> {
     if let Some(simple) = text["simpleText"].as_str() {
@@ -1415,6 +1457,20 @@ mod tests {
         assert_eq!(playlists[0].title, "aaa");
         assert_eq!(playlists[0].track_count, Some(6));
         assert_eq!(playlists[0].cover_url.as_deref(), Some("large"));
+    }
+
+    #[test]
+    fn account_info_comes_from_the_menu_header() {
+        let response = r#"{"actions":[{"openPopupAction":{"popup":{"multiPageMenuRenderer":{
+            "header":{"activeAccountHeaderRenderer":{
+                "accountName":{"runs":[{"text":"Ana"}]},
+                "channelHandle":{"runs":[{"text":"@ana"}]},
+                "accountPhoto":{"thumbnails":[{"url":"small"},{"url":"large"}]}}}}}}}]}"#;
+        let info = parse_account_info(response).unwrap();
+        assert_eq!(info.name, "Ana");
+        assert_eq!(info.handle.as_deref(), Some("@ana"));
+        assert_eq!(info.photo_url.as_deref(), Some("large"));
+        assert!(parse_account_info("{}").is_err());
     }
 
     #[test]

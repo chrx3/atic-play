@@ -1,3 +1,4 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 
 use gpui::{AnyElement, App, ClickEvent, Entity, FontWeight, Window, div, img, prelude::*, px};
@@ -8,7 +9,11 @@ use ytm_core::Playlist;
 use crate::account::{Account, AccountState};
 use crate::assets;
 use crate::covers::Covers;
-use crate::ui::{CARD_COVER_SIZE, skeleton, thumbnail};
+use crate::ui::{CARD_COVER_SIZE, avatar, skeleton, thumbnail};
+
+/// Size of the account picture, as downloaded and as shown.
+const ACCOUNT_PHOTO_PX: u32 = 88;
+const ACCOUNT_PHOTO: f32 = 36.;
 
 /// Height of a playlist row, and the size of its cover.
 const PLAYLIST_ROW_HEIGHT: f32 = 44.;
@@ -187,33 +192,95 @@ impl Sidebar {
 
     fn render_account(&self, cx: &mut App) -> impl IntoElement {
         let s = *Theme::of(cx);
-        let signed_in = self.account.read(cx).is_signed_in();
+        let account_state = self.account.read(cx);
+        let signed_in = account_state.is_signed_in();
+        let info = account_state.info().cloned();
         let account = self.account.clone();
         let on_sign_in = self.on_sign_in.clone();
+        let on_navigate = self.on_navigate.clone();
+        let in_settings = self.route == Route::Settings;
+        let settings_button = || {
+            let on_navigate = on_navigate.clone();
+            IconButton::new("sidebar-settings", "gear")
+                .selected(in_settings)
+                .tooltip("Ajustes")
+                .on_click(move |_: &ClickEvent, window, cx| {
+                    on_navigate(Route::Settings, window, cx)
+                })
+        };
+        let photo = info.as_ref().and_then(|info| {
+            let covers = self.covers.as_ref()?;
+            let url = info.photo_url.as_deref()?;
+            // Named after the picture, so another account never shows a cached one.
+            let mut hasher = DefaultHasher::new();
+            url.hash(&mut hasher);
+            let key = format!("account-{:x}", hasher.finish());
+            covers.update(cx, |covers, cx| {
+                covers.get(&key, Some(url), ACCOUNT_PHOTO_PX, cx)
+            })
+        });
         div()
             .pt_2()
             .flex()
             .flex_col()
             .gap_2()
-            .when(signed_in, |row| {
-                row.child(
+            .when(signed_in, |column| {
+                let (name, handle) = match &info {
+                    Some(info) => (info.name.clone(), info.handle.clone()),
+                    None => ("YouTube Music".to_string(), None),
+                };
+                column.child(
                     div()
-                        .px_3()
-                        .text_sm()
-                        .text_color(s.on_surface_variant)
-                        .child("Sesión de YouTube Music iniciada"),
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(avatar(photo, ACCOUNT_PHOTO, cx))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .truncate()
+                                        .child(name),
+                                )
+                                .children(handle.map(|handle| {
+                                    div()
+                                        .text_xs()
+                                        .text_color(s.on_surface_variant)
+                                        .truncate()
+                                        .child(handle)
+                                })),
+                        )
+                        .child(settings_button())
+                        .child(
+                            IconButton::new("sign-out", "export")
+                                .tooltip("Cerrar sesión")
+                                .on_click(move |_: &ClickEvent, _, cx| {
+                                    account.update(cx, |account, cx| account.sign_out(cx));
+                                }),
+                        ),
                 )
-                .child(Button::new("sign-out", "Cerrar sesión").text().on_click(
-                    move |_: &ClickEvent, _, cx| {
-                        account.update(cx, |account, cx| account.sign_out(cx));
-                    },
-                ))
             })
-            .when(!signed_in, |row| {
-                row.child(
-                    Button::new("sign-in", "Iniciar sesión")
-                        .tonal()
-                        .on_click(move |_: &ClickEvent, window, cx| on_sign_in(window, cx)),
+            .when(!signed_in, |column| {
+                column.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div().flex_1().child(
+                                Button::new("sign-in", "Iniciar sesión").tonal().on_click(
+                                    move |_: &ClickEvent, window, cx| on_sign_in(window, cx),
+                                ),
+                            ),
+                        )
+                        .child(settings_button()),
                 )
             })
     }

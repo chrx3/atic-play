@@ -2,7 +2,7 @@ use gpui::{
     ClickEvent, Context, Entity, EventEmitter, SharedString, Subscription, Window, div, prelude::*,
     px,
 };
-use gpui_m3::{Button, ListGroup, SettingRow, Slider, Switch, Theme};
+use gpui_m3::{Button, KeyCombo, KeyNames, ListGroup, SettingRow, Slider, Switch, Theme};
 use ytm_core::Client;
 
 use crate::account::Account;
@@ -195,6 +195,31 @@ impl SettingsView {
     }
 }
 
+/// The keyboard shortcuts (see `shortcuts.rs`), as the settings list them.
+const SHORTCUTS: [(&str, &[&str]); 9] = [
+    ("Reproducir o pausar", &["space"]),
+    ("Retroceder o avanzar 5 s", &["left", "right"]),
+    ("Bajar o subir el volumen", &["down", "up"]),
+    ("Canción anterior o siguiente", &["ctrl-left", "ctrl-right"]),
+    ("Silenciar", &["m"]),
+    ("Aleatorio y repetir", &["s", "r"]),
+    ("Buscar", &["ctrl-f", "/"]),
+    ("Volver atrás", &["alt-left", "backspace"]),
+    ("Cerrar menú o Reproduciendo", &["escape"]),
+];
+
+fn render_shortcuts() -> impl IntoElement {
+    SHORTCUTS.iter().enumerate().fold(
+        ListGroup::new().title("Atajos de teclado"),
+        |group, (index, (action, keys))| {
+            let combos = keys.iter().enumerate().map(|(key_index, key)| {
+                KeyCombo::new(("shortcut", index * 4 + key_index), *key).names(KeyNames::spanish())
+            });
+            group.row(*action, div().flex().gap_2().children(combos))
+        },
+    )
+}
+
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = *Theme::of(cx);
@@ -215,6 +240,7 @@ impl Render for SettingsView {
                     .child(self.render_appearance(cx))
                     .child(self.render_storage(cx))
                     .child(self.render_account(cx))
+                    .child(render_shortcuts())
                     .child(
                         div()
                             .px(px(6.))

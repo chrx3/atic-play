@@ -4,7 +4,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use gpui::{Context, EventEmitter, SharedString};
-use ytm_core::{Client, Library, Playlist, Track};
+use ytm_core::{AccountInfo, Client, Library, Playlist, Track};
 
 use crate::google_sign_in;
 use crate::toasts;
@@ -67,6 +67,8 @@ pub struct Account {
     state: AccountState,
     library: Option<Library>,
     library_loading: bool,
+    /// The name and picture shown in the sidebar. Kept in memory only.
+    info: Option<AccountInfo>,
     /// The user's own playlists, which songs can be saved to.
     editable_playlists: Vec<Playlist>,
     editable_loading: bool,
@@ -105,6 +107,7 @@ impl Account {
             state: AccountState::Restoring,
             library: None,
             library_loading: false,
+            info: None,
             editable_playlists: Vec::new(),
             editable_loading: false,
             error: None,
@@ -117,6 +120,10 @@ impl Account {
 
     pub fn is_signed_in(&self) -> bool {
         matches!(self.state, AccountState::SignedIn)
+    }
+
+    pub fn info(&self) -> Option<&AccountInfo> {
+        self.info.as_ref()
     }
 
     pub fn library(&self) -> Option<&Library> {
@@ -387,6 +394,7 @@ impl Account {
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
         self.state = AccountState::SignedOut;
         self.library = None;
+        self.info = None;
         self.editable_playlists.clear();
         self.error = None;
         cx.notify();
@@ -430,5 +438,21 @@ impl Account {
         self.error = None;
         self.reload_library(cx);
         self.reload_editable_playlists(cx);
+        let info = self.client.account_info();
+        cx.spawn(async move |this, cx| {
+            // Personal data: neither logged nor written anywhere.
+            let Ok(info) = info.await else {
+                log::warn!("could not read the account name");
+                return;
+            };
+            this.update(cx, |this, cx| {
+                if this.is_signed_in() {
+                    this.info = Some(info);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 }
