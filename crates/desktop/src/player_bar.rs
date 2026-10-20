@@ -3,7 +3,8 @@ use std::rc::Rc;
 
 use gpui::{
     Bounds, ClickEvent, Context, Entity, EventEmitter, FontWeight, MouseButton, MouseDownEvent,
-    Pixels, Subscription, Window, canvas, div, prelude::*, px,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, Subscription, Window, canvas,
+    div, prelude::*, px,
 };
 use gpui_m3::{IconButton, LoadingIndicator, Shape, ShapeName, Slider, Theme, Tooltip};
 use ytm_core::RepeatMode;
@@ -17,6 +18,10 @@ use crate::ui::{format_time, like_button, track_cover};
 
 const COVER_SIZE: u32 = 120;
 const SIDE_WIDTH: f32 = 300.;
+/// What one notch of the mouse wheel changes the volume by.
+const WHEEL_VOLUME_STEP: f32 = 0.05;
+/// Half the width of the time shown over the progress wave, to center it on the pointer.
+const PREVIEW_HALF_WIDTH: f32 = 22.;
 
 pub enum PlayerBarEvent {
     ToggleQueue,
@@ -32,8 +37,12 @@ pub struct PlayerBar {
     account: Entity<Account>,
     queue_open: bool,
     now_playing_open: bool,
-    /// Where the progress wave was laid out, to turn a click into a position.
+    /// Where the progress wave was laid out, to turn the pointer into a position.
     progress_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// While the progress is dragged: where it will seek to (0..1) when released.
+    scrub: Option<f32>,
+    /// Where the pointer is over the progress (0..1), to show the time there.
+    hover: Option<f32>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -59,6 +68,8 @@ impl PlayerBar {
             queue_open: true,
             now_playing_open: false,
             progress_bounds: Rc::default(),
+            scrub: None,
+            hover: None,
             _subscriptions: subscriptions,
         }
     }
@@ -73,14 +84,37 @@ impl PlayerBar {
         cx.notify();
     }
 
-    fn seek_to_click(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+    /// The pointer pressed, moved or was released over (or, while dragging, anywhere around) the
+    /// progress wave.
+    fn pointer_on_progress(
+        &mut self,
+        position: Point<Pixels>,
+        pressed: bool,
+        released: bool,
+        cx: &mut Context<Self>,
+    ) {
         let bounds = self.progress_bounds.get();
         if bounds.size.width <= px(0.) {
             return;
         }
-        let fraction = (event.position.x - bounds.origin.x) / bounds.size.width;
-        self.playback
-            .update(cx, |playback, cx| playback.seek_fraction(fraction, cx));
+        let fraction = ((position.x - bounds.origin.x) / bounds.size.width).clamp(0., 1.);
+        let hover = bounds.contains(&position).then_some(fraction);
+        let scrub = if released {
+            if self.scrub.is_some() {
+                self.playback
+                    .update(cx, |playback, cx| playback.seek_fraction(fraction, cx));
+            }
+            None
+        } else if pressed && (self.scrub.is_some() || hover.is_some()) {
+            Some(fraction)
+        } else {
+            None
+        };
+        if (scrub, hover) != (self.scrub, self.hover) {
+            self.scrub = scrub;
+            self.hover = hover;
+            cx.notify();
+        }
     }
 
     fn render_track(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -162,6 +196,21 @@ impl PlayerBar {
         let progress = duration.map(|duration| {
             (position.as_secs_f32() / duration.as_secs_f32().max(1.)).clamp(0., 1.)
         });
+        // While dragging, the wave and the time follow the pointer; the seek happens on release.
+        let scrub = self.scrub.filter(|_| duration.is_some());
+        let progress = scrub.or(progress);
+        let shown_position = match (scrub, duration) {
+            (Some(scrub), Some(duration)) => duration.mul_f32(scrub),
+            _ => position,
+        };
+        let preview = self
+            .scrub
+            .or(self.hover)
+            .zip(duration)
+            .map(|(fraction, duration)| {
+                let width = f32::from(self.progress_bounds.get().size.width);
+                (fraction * width, duration.mul_f32(fraction))
+            });
 
         let play_button = if loading {
             div()
@@ -186,6 +235,8 @@ impl PlayerBar {
         };
 
         let progress_bounds = self.progress_bounds.clone();
+        // Only a song with a known length can be sought.
+        let bar = duration.map(|_| cx.entity().downgrade());
         div()
             .flex_1()
             .max_w(px(720.))
@@ -254,7 +305,7 @@ impl PlayerBar {
                             .w(px(40.))
                             .flex()
                             .justify_end()
-                            .child(format_time(position.as_secs())),
+                            .child(format_time(shown_position.as_secs())),
                     )
                     .child(
                         div()
@@ -269,17 +320,85 @@ impl PlayerBar {
                             .child(
                                 canvas(
                                     move |bounds, _, _| progress_bounds.set(bounds),
-                                    |_, _, _, _| {},
+                                    move |_, _, window, _| {
+                                        // Listened to on the whole window, so a drag keeps
+                                        // going outside the wave.
+                                        let Some(bar) = bar.clone() else {
+                                            return;
+                                        };
+                                        let (bar_moving, bar_released) = (bar.clone(), bar.clone());
+                                        window.on_mouse_event(
+                                            move |event: &MouseDownEvent, phase, _, cx| {
+                                                if phase.bubble()
+                                                    && event.button == MouseButton::Left
+                                                {
+                                                    bar.update(cx, |bar, cx| {
+                                                        bar.pointer_on_progress(
+                                                            event.position,
+                                                            true,
+                                                            false,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .ok();
+                                                }
+                                            },
+                                        );
+                                        let bar = bar_moving;
+                                        window.on_mouse_event(
+                                            move |event: &MouseMoveEvent, phase, _, cx| {
+                                                if phase.bubble() {
+                                                    let pressed = event.pressed_button
+                                                        == Some(MouseButton::Left);
+                                                    bar.update(cx, |bar, cx| {
+                                                        bar.pointer_on_progress(
+                                                            event.position,
+                                                            pressed,
+                                                            false,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .ok();
+                                                }
+                                            },
+                                        );
+                                        let bar = bar_released;
+                                        window.on_mouse_event(
+                                            move |event: &MouseUpEvent, phase, _, cx| {
+                                                if phase.bubble()
+                                                    && event.button == MouseButton::Left
+                                                {
+                                                    bar.update(cx, |bar, cx| {
+                                                        bar.pointer_on_progress(
+                                                            event.position,
+                                                            false,
+                                                            true,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .ok();
+                                                }
+                                            },
+                                        );
+                                    },
                                 )
                                 .absolute()
                                 .size_full(),
                             )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                                    this.seek_to_click(event, cx)
-                                }),
-                            ),
+                            .children(preview.map(|(x, time)| {
+                                div()
+                                    .absolute()
+                                    .bottom(px(26.))
+                                    .left(px(x - PREVIEW_HALF_WIDTH))
+                                    .w(px(PREVIEW_HALF_WIDTH * 2.))
+                                    .py_0p5()
+                                    .flex()
+                                    .justify_center()
+                                    .rounded(px(6.))
+                                    .bg(s.on_surface)
+                                    .text_color(s.surface)
+                                    .child(format_time(time.as_secs()))
+                            })),
                     )
                     .child(
                         div().w(px(40.)).child(
@@ -320,13 +439,37 @@ impl PlayerBar {
                 .on_click(self.on_playback(|playback, cx| playback.toggle_mute(cx), cx)),
             )
             .child(
-                Slider::new("volume", volume, 0.0..=1.0)
-                    .width(px(120.))
-                    .on_change(move |value, _, cx| {
-                        entity
-                            .update(cx, |playback, cx| playback.set_volume(value, cx))
-                            .ok();
-                    }),
+                div()
+                    .id("volume-area")
+                    // The wheel turns the volume, like most players.
+                    .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+                        let delta = event.delta.pixel_delta(px(20.)).y;
+                        if delta == px(0.) {
+                            return;
+                        }
+                        let step = if delta > px(0.) {
+                            WHEEL_VOLUME_STEP
+                        } else {
+                            -WHEEL_VOLUME_STEP
+                        };
+                        this.playback.update(cx, |playback, cx| {
+                            let volume = if playback.is_muted() {
+                                0.
+                            } else {
+                                playback.volume()
+                            };
+                            playback.set_volume(volume + step, cx)
+                        });
+                    }))
+                    .child(
+                        Slider::new("volume", volume, 0.0..=1.0)
+                            .width(px(120.))
+                            .on_change(move |value, _, cx| {
+                                entity
+                                    .update(cx, |playback, cx| playback.set_volume(value, cx))
+                                    .ok();
+                            }),
+                    ),
             )
             .child(
                 IconButton::new("queue", assets::QUEUE)
