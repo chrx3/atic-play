@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use anyhow::{Context as _, Result, anyhow, bail};
 use rustypipe::client::{ClientType, RustyPipe, RustyPipeQuery};
 use rustypipe::model::{
-    AlbumItem, ArtistId, ArtistItem, MusicPlaylistItem, Thumbnail, TrackItem, VideoItem,
+    AlbumItem, ArtistId, ArtistItem, MusicItem, MusicPlaylistItem, Thumbnail, TrackItem, VideoItem,
 };
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -154,6 +154,16 @@ pub struct PlaylistPage {
 pub struct Library {
     pub liked: Vec<Track>,
     pub playlists: Vec<Playlist>,
+    pub albums: Vec<Album>,
+    pub artists: Vec<Artist>,
+}
+
+/// What YouTube Music suggests while the user types a search.
+#[derive(Debug, Clone, Default)]
+pub struct SearchSuggestions {
+    /// Completed search terms.
+    pub terms: Vec<String>,
+    pub tracks: Vec<Track>,
     pub albums: Vec<Album>,
     pub artists: Vec<Artist>,
 }
@@ -459,6 +469,29 @@ impl Client {
         self.spawn(async move {
             let result = pipe.query().music_search_artists(&query).await?;
             Ok(result.items.items.into_iter().map(Artist::from).collect())
+        })
+    }
+
+    pub fn search_suggestions(
+        &self,
+        query: String,
+    ) -> impl Future<Output = Result<SearchSuggestions>> + use<> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move {
+            let result = pipe.query().music_search_suggestion(&query).await?;
+            let mut suggestions = SearchSuggestions {
+                terms: result.terms,
+                ..SearchSuggestions::default()
+            };
+            for item in result.items {
+                match item {
+                    MusicItem::Track(track) => suggestions.tracks.push(track.into()),
+                    MusicItem::Album(album) => suggestions.albums.push(album.into()),
+                    MusicItem::Artist(artist) => suggestions.artists.push(artist.into()),
+                    MusicItem::Playlist(_) | MusicItem::User(_) => {}
+                }
+            }
+            Ok(suggestions)
         })
     }
 

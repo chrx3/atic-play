@@ -24,6 +24,8 @@ pub struct Settings {
     pub normalize: Option<bool>,
     /// How many seconds tracks overlap at a change; 0 (the default) is gapless.
     pub crossfade_secs: f32,
+    /// The latest searches, newest first, offered when the search field is empty.
+    pub recent_searches: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -93,14 +95,15 @@ pub fn get(cx: &App) -> &Settings {
 pub fn update(cx: &mut App, change: impl FnOnce(&mut Settings)) {
     let store = cx.global_mut::<Store>();
     change(&mut store.settings);
-    if let Err(err) = write(&store.path, &store.settings) {
+    if let Err(err) = write_json(&store.path, &store.settings) {
         log::warn!("could not save settings: {err}");
     }
 }
 
-fn write(path: &Path, settings: &Settings) -> std::io::Result<()> {
-    let json = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)?;
-    // Write aside and rename, so a crash mid-write never leaves broken settings.
+/// Writes `value` as JSON to `path`.
+pub fn write_json(path: &Path, value: &impl Serialize) -> std::io::Result<()> {
+    let json = serde_json::to_string_pretty(value).map_err(std::io::Error::other)?;
+    // Write aside and rename, so a crash mid-write never leaves a broken file.
     let partial = path.with_extension("json.part");
     std::fs::write(&partial, json)?;
     std::fs::rename(&partial, path)

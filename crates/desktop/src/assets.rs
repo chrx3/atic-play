@@ -35,6 +35,7 @@ icons! {
     DOWNLOAD => "download",
     DOWNLOAD_DONE => "download-done",
     OFFLINE => "offline",
+    MUSIC => "music",
 }
 
 pub const LOGO: &str = "brand/atic-play.png";

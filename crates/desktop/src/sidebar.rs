@@ -14,6 +14,7 @@ pub enum Route {
     Home,
     Explore,
     Library,
+    History,
     Search,
     Playlist,
     Album,
@@ -186,6 +187,7 @@ impl RenderOnce for Sidebar {
             .child(self.item(Route::Home, "Inicio", assets::HOME))
             .child(self.item(Route::Explore, "Explorar", assets::EXPLORE))
             .child(self.item(Route::Library, "Biblioteca", assets::LIBRARY))
+            .child(self.item(Route::History, "Historial", "history"))
             .child(div().mx_3().my_3().h(px(1.)).bg(s.outline_variant))
             .child(
                 div()

@@ -4,16 +4,14 @@ use gpui::{
     AnyElement, AnyView, ClickEvent, Context, Div, Entity, Hsla, StyleRefinement, Subscription,
     Window, div, prelude::*, px,
 };
-use gpui_m3::{
-    IconButton, Segment, SegmentedButtons, Spring, TextField, TextFieldEvent, Theme, animate_theme,
-    motion,
-};
+use gpui_m3::{IconButton, Segment, SegmentedButtons, Spring, Theme, animate_theme, motion};
 use ytm_core::{Client, Playlist};
 
 use crate::account::Account;
 use crate::album_view::AlbumView;
 use crate::artist_view::ArtistView;
 use crate::covers::Covers;
+use crate::history_view::HistoryView;
 use crate::home_view::HomeView;
 use crate::library_view::{LibraryEvent, LibraryView};
 use crate::lyrics_panel::LyricsPanel;
@@ -23,6 +21,7 @@ use crate::playback::Playback;
 use crate::player_bar::{PlayerBar, PlayerBarEvent};
 use crate::playlist_view::PlaylistView;
 use crate::queue_panel::QueuePanel;
+use crate::search_box::{SearchBox, SearchBoxEvent};
 use crate::search_view::SearchView;
 use crate::settings;
 use crate::settings_view::{SettingsEvent, SettingsView};
@@ -52,10 +51,11 @@ pub struct YtmApp {
     account: Entity<Account>,
     playback: Entity<Playback>,
     navigation: Entity<Navigation>,
-    search_field: Entity<TextField>,
+    search_box: Entity<SearchBox>,
     home_view: Entity<HomeView>,
     search_view: Entity<SearchView>,
     library_view: Entity<LibraryView>,
+    history_view: Entity<HistoryView>,
     playlist_view: Entity<PlaylistView>,
     album_view: Entity<AlbumView>,
     artist_view: Entity<ArtistView>,
@@ -136,6 +136,8 @@ impl YtmApp {
                 cx,
             )
         });
+        let history_view =
+            cx.new(|cx| HistoryView::new(playback.clone(), covers.clone(), navigation.clone(), cx));
         let settings_view = cx.new(|cx| SettingsView::new(client.clone(), account.clone(), cx));
         let queue_panel =
             cx.new(|cx| QueuePanel::new(playback.clone(), covers.clone(), navigation.clone(), cx));
@@ -151,19 +153,15 @@ impl YtmApp {
         });
         let player_bar =
             cx.new(|cx| PlayerBar::new(playback.clone(), covers.clone(), account.clone(), cx));
-        let search_field = cx.new(|cx| {
-            TextField::new(cx)
-                .placeholder("¿Qué quieres escuchar?")
-                .icon("search")
-        });
+        let search_box =
+            cx.new(|cx| SearchBox::new(client.clone(), playback.clone(), navigation.clone(), cx));
 
         let subscriptions = vec![
-            cx.subscribe(&search_field, |this, _, event: &TextFieldEvent, cx| {
-                if let TextFieldEvent::Submitted(query) = event {
-                    this.navigate(Route::Search, cx);
-                    this.search_view
-                        .update(cx, |view, cx| view.search(query.to_string(), cx));
-                }
+            cx.subscribe(&search_box, |this, _, event: &SearchBoxEvent, cx| {
+                let SearchBoxEvent::Search(query) = event;
+                this.navigate(Route::Search, cx);
+                this.search_view
+                    .update(cx, |view, cx| view.search(query.clone(), cx));
             }),
             cx.subscribe(
                 &player_bar,
@@ -263,10 +261,11 @@ impl YtmApp {
             account,
             playback,
             navigation,
-            search_field,
+            search_box,
             home_view,
             search_view,
             library_view,
+            history_view,
             playlist_view,
             album_view,
             artist_view,
@@ -292,8 +291,12 @@ impl YtmApp {
         if route != self.route || matches!(route, Route::Album | Route::Artist) {
             self.page_generation += 1;
         }
-        if route == Route::Settings && self.route != Route::Settings {
-            self.settings_view.update(cx, |view, cx| view.refresh(cx));
+        if route != self.route {
+            match route {
+                Route::Settings => self.settings_view.update(cx, |view, cx| view.refresh(cx)),
+                Route::History => self.history_view.update(cx, |view, cx| view.refresh(cx)),
+                _ => {}
+            }
         }
         self.route = route;
         self.set_now_playing_open(false, cx);
@@ -345,6 +348,7 @@ impl YtmApp {
             Route::Home => Some(AnyView::from(self.home_view.clone())),
             Route::Explore => None,
             Route::Library => Some(AnyView::from(self.library_view.clone())),
+            Route::History => Some(AnyView::from(self.history_view.clone())),
             Route::Playlist => Some(AnyView::from(self.playlist_view.clone())),
             Route::Album => Some(AnyView::from(self.album_view.clone())),
             Route::Artist => Some(AnyView::from(self.artist_view.clone())),
@@ -468,7 +472,7 @@ impl Render for YtmApp {
                 div()
                     .flex_1()
                     .max_w(px(560.))
-                    .child(self.search_field.clone()),
+                    .child(self.search_box.clone()),
             )
             .child(div().flex_1())
             .child(

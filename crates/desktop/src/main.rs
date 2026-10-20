@@ -8,6 +8,8 @@ mod covers;
 mod download_ui;
 mod downloads;
 mod google_sign_in;
+mod history;
+mod history_view;
 mod home_view;
 mod library_view;
 mod lyrics_panel;
@@ -18,6 +20,7 @@ mod playback;
 mod player_bar;
 mod playlist_view;
 mod queue_panel;
+mod search_box;
 mod search_view;
 mod settings;
 mod settings_view;
@@ -102,6 +105,7 @@ fn main() -> ExitCode {
                 }
             };
             downloads::init(client.clone(), &data_dir, cx);
+            history::init(&data_dir, cx);
 
             let window_bounds = match settings::get(cx).window {
                 Some(saved) => saved.to_window(),

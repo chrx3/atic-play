@@ -9,7 +9,7 @@ mod queue;
 
 pub use client::{
     Album, AlbumPage, Artist, ArtistPage, Audio, Client, HomeFeed, Library, Playlist, PlaylistPage,
-    Track,
+    SearchSuggestions, Track,
 };
 pub use lyrics::{LyricLine, Lyrics, LyricsClient};
 pub use player::AudioPlayer;

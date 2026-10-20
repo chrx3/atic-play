@@ -6,6 +6,7 @@ use gpui::{Context, Hsla, SharedString, Subscription, Task, rgb};
 use material_colors::image::{Image, ImageReader};
 use ytm_core::{Audio, AudioPlayer, Client, Queue, RepeatMode, Track};
 
+use crate::history::History;
 use crate::media_session::{MediaEvent, MediaSession, MediaState, SeekDirection};
 use crate::settings;
 
@@ -23,6 +24,8 @@ const MEDIA_SEEK_STEP: Duration = Duration::from_secs(10);
 /// Without crossfade, the next track is queued behind the current one this long before the end,
 /// so it follows without a gap. Ample against tick timing and duration rounding.
 const GAPLESS_LEAD: Duration = Duration::from_secs(2);
+/// A track counts as played, for the history, after this long (or half of a shorter track).
+const PLAY_COUNTS_AFTER: Duration = Duration::from_secs(30);
 
 /// What is playing and what comes next. Views observe it.
 pub struct Playback {
@@ -49,6 +52,8 @@ pub struct Playback {
     /// The next track is queued in the player behind the current one (gapless) and has not
     /// taken over yet.
     gapless_pending: bool,
+    /// The load (its `generation`) already added to the history.
+    recorded: Option<u64>,
     seed: Option<Hsla>,
     /// The current track's cover, for the system media session.
     cover: Option<PathBuf>,
@@ -112,6 +117,7 @@ impl Playback {
             prefetched: None,
             play_when_prefetched: false,
             gapless_pending: false,
+            recorded: None,
             seed: None,
             cover: None,
             opening: None,
@@ -378,6 +384,7 @@ impl Playback {
         self.connect_media(cx);
         self.handle_media_events(cx);
         self.advance_if_due(cx);
+        self.record_play(cx);
 
         let finished = self.started && self.player.as_ref().is_some_and(AudioPlayer::is_idle);
         if finished {
@@ -396,6 +403,23 @@ impl Playback {
 
         if self.settings_dirty {
             self.save_settings(cx);
+        }
+    }
+
+    /// Adds the current track to the history once it has played long enough to count.
+    fn record_play(&mut self, cx: &mut Context<Self>) {
+        if !self.started || self.recorded == Some(self.generation) {
+            return;
+        }
+        let threshold = self.duration().map_or(PLAY_COUNTS_AFTER, |duration| {
+            (duration / 2).min(PLAY_COUNTS_AFTER)
+        });
+        if self.position() < threshold {
+            return;
+        }
+        self.recorded = Some(self.generation);
+        if let Some(track) = self.current().cloned() {
+            History::global(cx).update(cx, |history, cx| history.record(track, cx));
         }
     }
 
@@ -537,6 +561,10 @@ impl Playback {
                 self.apply_volume();
                 if let (Some(at), Some(player)) = (self.resume_at.take(), &self.player) {
                     player.seek(at);
+                    // Past that point the last session already counted it.
+                    if at >= PLAY_COUNTS_AFTER {
+                        self.recorded = Some(generation);
+                    }
                 }
                 self.sync_media(true);
                 self.refill_radio(cx);

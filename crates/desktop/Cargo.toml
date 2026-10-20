@@ -30,6 +30,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # System media session: Windows SMTC (what Atic's "Ahora suena" reads) and MPRIS on Linux.
 souvlaki = "0.8"
+# Local dates for the history; already built for rustypipe.
+time = { version = "0.3", features = ["local-offset", "macros"] }
 # The Google sign-in window: a WebView2 with its own profile, whose cookies the app can read
 # (Chrome's and Edge's are encrypted for other apps).
 tao = "0.37"
