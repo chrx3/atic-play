@@ -30,6 +30,8 @@ const GAPLESS_LEAD: Duration = Duration::from_secs(2);
 const MAX_SKIPS_IN_A_ROW: u32 = 3;
 /// How long to wait before asking for the radio again after it failed.
 const RADIO_RETRY_AFTER: Duration = Duration::from_secs(15);
+/// While no output device can be opened, how often (in ticks) to try again.
+const DEVICE_RETRY_TICKS: u32 = 8;
 /// A track counts as played, for the history, after this long (or half of a shorter track).
 const PLAY_COUNTS_AFTER: Duration = Duration::from_secs(30);
 
@@ -72,6 +74,11 @@ pub struct Playback {
     muted: bool,
     /// Where to start the restored track the first time it plays.
     resume_at: Option<Duration>,
+    /// The track starts paused (it was paused when the output device changed).
+    resume_paused: bool,
+    /// The output device went away and none could be opened yet: where the track was and
+    /// whether it was paused, to pick it up once a device is back.
+    device_pending: Option<(Duration, bool)>,
     error: Option<SharedString>,
     media: Option<MediaSession>,
     media_tried: bool,
@@ -136,6 +143,8 @@ impl Playback {
             volume: saved.volume.unwrap_or(1.),
             muted: saved.muted,
             resume_at,
+            resume_paused: false,
+            device_pending: None,
             error,
             media: None,
             media_tried: false,
@@ -348,6 +357,12 @@ impl Playback {
 
     pub fn toggle_pause(&mut self, cx: &mut Context<Self>) {
         let Some(player) = &self.player else {
+            // No output device: try again now, where the track was if it was waiting for one.
+            if self.device_pending.is_some() {
+                self.reopen_audio_device(false, cx);
+            } else if !self.loading && self.current().is_some() {
+                self.load_current(cx);
+            }
             return;
         };
         if self.started {
@@ -414,6 +429,7 @@ impl Playback {
 
     fn tick(&mut self, cx: &mut Context<Self>) {
         self.ticks = self.ticks.wrapping_add(1);
+        self.follow_audio_device(cx);
         self.connect_media(cx);
         self.handle_media_events(cx);
         self.advance_if_due(cx);
@@ -437,6 +453,61 @@ impl Playback {
         if self.settings_dirty {
             self.save_settings(cx);
         }
+    }
+
+    /// When the output device goes away (unplugged, or the system switched to another), opens
+    /// the new default one and picks the track up where it was, playing or paused as it was.
+    /// The old device's player cannot be moved, so the track is loaded again (from the disk
+    /// cache, so at once).
+    fn follow_audio_device(&mut self, cx: &mut Context<Self>) {
+        let lost = self.player.as_ref().is_some_and(AudioPlayer::device_lost);
+        if lost {
+            let state = (self.position(), !self.is_playing());
+            // Without a track on the player there is nothing to pick up.
+            self.device_pending = self.started.then_some(state);
+            self.player = None;
+            self.started = false;
+        } else if self.player.is_some()
+            || self.device_pending.is_none()
+            || !self.ticks.is_multiple_of(DEVICE_RETRY_TICKS)
+        {
+            return;
+        }
+        self.reopen_audio_device(lost, cx);
+    }
+
+    /// Opens the default output device and resumes the track waiting for one, if any.
+    fn reopen_audio_device(&mut self, lost: bool, cx: &mut Context<Self>) {
+        match AudioPlayer::new() {
+            Ok(player) => {
+                self.player = Some(player);
+                self.error = None;
+                self.apply_volume();
+                if let Some((position, paused)) = self.device_pending.take() {
+                    let recorded = self.recorded == Some(self.generation);
+                    self.resume_at = Some(position);
+                    self.resume_paused = paused;
+                    self.load_current(cx);
+                    // The same listen, already in the history.
+                    if recorded {
+                        self.recorded = Some(self.generation);
+                    }
+                }
+                if lost {
+                    toasts::show("La salida de audio cambió; sigue sonando aquí", cx);
+                }
+            }
+            Err(err) => {
+                if lost {
+                    log::warn!("no audio output: {err:#}");
+                }
+                self.error = Some(
+                    "No hay salida de audio. Conecta unos audífonos o parlantes para seguir."
+                        .into(),
+                );
+            }
+        }
+        cx.notify();
     }
 
     /// Adds the current track to the history once it has played long enough to count.
@@ -531,6 +602,8 @@ impl Playback {
         let Some(track) = self.current().cloned() else {
             return;
         };
+        // A newer choice replaces the track waiting for a device.
+        self.device_pending = None;
         // No device at startup (none plugged in, or busy): try again now that the user wants to
         // play.
         if self.player.is_none() {
@@ -609,6 +682,11 @@ impl Playback {
                 self.started = true;
                 self.skips_in_a_row = 0;
                 self.apply_volume();
+                if std::mem::take(&mut self.resume_paused)
+                    && let Some(player) = &self.player
+                {
+                    player.toggle_pause();
+                }
                 if let (Some(at), Some(player)) = (self.resume_at.take(), &self.player) {
                     player.seek(at);
                     // Past that point the last session already counted it.
@@ -621,6 +699,7 @@ impl Playback {
                 self.prefetch_next(cx);
             }
             Err(err) => {
+                self.resume_paused = false;
                 let title = self.current().map(|track| track.title.clone());
                 log::warn!("could not play {title:?}: {err:#}");
                 self.skip_failed(title, cx);

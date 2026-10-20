@@ -1,11 +1,14 @@
 use std::io::Cursor;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use rodio::source::SeekError;
-use rodio::{ChannelCount, Decoder, MixerDeviceSink, Player, Sample, SampleRate, Source};
+use rodio::{
+    ChannelCount, CpalError, CpalErrorKind, Decoder, DeviceSinkBuilder, MixerDeviceSink, Player,
+    Sample, SampleRate, Source,
+};
 
 /// How many times per second the level is measured.
 const LEVELS_PER_SECOND: u32 = 30;
@@ -39,11 +42,15 @@ pub struct AudioPlayer {
     fade_out_ends: Option<Instant>,
     /// The loudness of what plays, as `f32` bits, written by the audio thread.
     level: Arc<AtomicU32>,
+    /// Set by the audio thread when the output device went away or changed, so nothing is heard
+    /// any more; see [`AudioPlayer::device_lost`].
+    device_lost: Arc<AtomicBool>,
 }
 
 impl AudioPlayer {
     pub fn new() -> Result<Self> {
-        let mut sink = rodio::DeviceSinkBuilder::open_default_sink()?;
+        let device_lost = Arc::new(AtomicBool::new(false));
+        let mut sink = open_sink(device_lost.clone())?;
         sink.log_on_drop(false);
         let decks = [
             Player::connect_new(sink.mixer()),
@@ -58,7 +65,14 @@ impl AudioPlayer {
             gapless_fade: None,
             fade_out_ends: None,
             level: Arc::default(),
+            device_lost,
         })
+    }
+
+    /// The output device was unplugged, or the system switched to another one: this player is
+    /// silent for good and a new one has to be opened (on the new default device).
+    pub fn device_lost(&self) -> bool {
+        self.device_lost.load(Ordering::Relaxed)
     }
 
     /// Replaces whatever is playing with an M4A/AAC track held in memory. `gain` normalizes its
@@ -206,6 +220,28 @@ impl AudioPlayer {
             source: Box::new(source),
             fade,
         })
+    }
+}
+
+/// Opens the default output device, noting in `device_lost` when it stops working. Falls back
+/// to any device that opens, without that notice.
+fn open_sink(device_lost: Arc<AtomicBool>) -> Result<MixerDeviceSink> {
+    let on_error = move |err: CpalError| match err.kind() {
+        // On Windows a change of default device also ends the stream (WASAPI does not move it).
+        CpalErrorKind::DeviceNotAvailable | CpalErrorKind::StreamInvalidated => {
+            log::warn!("audio output lost: {err}");
+            device_lost.store(true, Ordering::Relaxed);
+        }
+        _ => log::warn!("audio output: {err}"),
+    };
+    let watched = DeviceSinkBuilder::from_default_device()
+        .and_then(|builder| builder.with_error_callback(on_error).open_stream());
+    match watched {
+        Ok(sink) => Ok(sink),
+        Err(err) => {
+            log::warn!("default audio output: {err}; trying the others");
+            Ok(DeviceSinkBuilder::open_default_sink()?)
+        }
     }
 }
 
