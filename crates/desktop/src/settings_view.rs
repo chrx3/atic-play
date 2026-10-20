@@ -196,7 +196,7 @@ impl SettingsView {
 }
 
 /// The keyboard shortcuts (see `shortcuts.rs`), as the settings list them.
-const SHORTCUTS: [(&str, &[&str]); 10] = [
+const SHORTCUTS: [(&str, &[&str]); 9] = [
     ("Reproducir o pausar", &["space"]),
     ("Retroceder o avanzar 5 s", &["left", "right"]),
     ("Bajar o subir el volumen", &["down", "up"]),
@@ -206,7 +206,6 @@ const SHORTCUTS: [(&str, &[&str]); 10] = [
     ("Buscar", &["ctrl-f", "/"]),
     ("Volver atrás", &["alt-left", "backspace"]),
     ("Cerrar menú o Reproduciendo", &["escape"]),
-    ("Mini reproductor", &["ctrl-shift-m"]),
 ];
 
 fn render_shortcuts() -> impl IntoElement {

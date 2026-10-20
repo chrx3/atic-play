@@ -471,14 +471,6 @@ impl PlayerBar {
                             }),
                     ),
             )
-            .child({
-                let (playback, covers) = (self.playback.clone(), self.covers.clone());
-                IconButton::new("mini-player", "panel-bottom")
-                    .tooltip("Mini reproductor (Ctrl+Mayús+M)")
-                    .on_click(move |_: &ClickEvent, _, cx| {
-                        crate::mini_player::toggle(playback.clone(), covers.clone(), cx)
-                    })
-            })
             .child(
                 IconButton::new("queue", assets::QUEUE)
                     .selected(self.queue_open)

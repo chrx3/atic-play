@@ -18,7 +18,6 @@ use crate::home_view::HomeView;
 use crate::library_view::{LibraryEvent, LibraryView};
 use crate::lyrics_panel::LyricsPanel;
 use crate::media_session::SeekDirection;
-use crate::mini_player;
 use crate::navigation::{Navigation, NavigationEvent, render_track_menu};
 use crate::now_playing_view::{NowPlayingEvent, NowPlayingView};
 use crate::playback::Playback;
@@ -32,7 +31,7 @@ use crate::settings;
 use crate::settings_view::{SettingsEvent, SettingsView};
 use crate::shortcuts::{
     self, Close, CycleRepeat, FocusSearch, GoBack, NextTrack, PreviousTrack, SeekBackward,
-    SeekForward, ToggleMiniPlayer, ToggleMute, TogglePlay, ToggleShuffle, VolumeDown, VolumeUp,
+    SeekForward, ToggleMute, TogglePlay, ToggleShuffle, VolumeDown, VolumeUp,
 };
 use crate::sidebar::{Route, Sidebar};
 use crate::sign_in::SignInDialog;
@@ -799,9 +798,6 @@ impl Render for YtmApp {
                 this.update_playback(cx, Playback::cycle_repeat)
             }))
             .on_action(cx.listener(|this, _: &GoBack, _, cx| this.go_back(cx)))
-            .on_action(cx.listener(|this, _: &ToggleMiniPlayer, _, cx| {
-                mini_player::toggle(this.playback.clone(), this.covers.clone(), cx)
-            }))
             .on_action(cx.listener(|this, _: &Close, _, cx| this.close(cx)))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 // The search field is not on screen behind "Reproduciendo".
