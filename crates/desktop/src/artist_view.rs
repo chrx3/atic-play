@@ -2,7 +2,7 @@ use gpui::{
     AnyElement, ClickEvent, Context, Entity, FontWeight, SharedString, Subscription, Window, div,
     prelude::*, px,
 };
-use gpui_m3::{IconButton, Theme};
+use gpui_m3::{IconButton, Shape, ShapeName, Theme};
 use ytm_core::{Artist, ArtistPage, Client, Track};
 
 use crate::assets;
@@ -12,7 +12,7 @@ use crate::navigation::Navigation;
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening, track_row};
 use crate::ui::{
-    CARD_COVER_SIZE, avatar, compact_count, failed, friendly_error, section_title, skeleton,
+    CARD_COVER_SIZE, avatar, compact_count, failed, friendly_error, hero, section_title, skeleton,
     skeleton_cards, skeleton_rows,
 };
 
@@ -135,13 +135,24 @@ impl ArtistView {
         let description = page.and_then(|page| page.description.clone());
         let has_tracks = !self.top_tracks().is_empty();
 
-        div()
+        let seed = picture.as_deref().and_then(|picture| {
+            self.covers
+                .update(cx, |covers, cx| covers.seed(picture, cx))
+        });
+        // The picture takes an expressive shape that breathes into another under the pointer.
+        let picture = match picture {
+            Some(path) => Shape::new(ShapeName::Cookie12)
+                .size(px(PICTURE_SIZE))
+                .image(path.as_path())
+                .breathe_on_hover("artist-picture", ShapeName::Sunny)
+                .into_any_element(),
+            None => avatar(None, PICTURE_SIZE, cx).into_any_element(),
+        };
+        hero(seed, cx)
             .flex()
             .items_end()
             .gap_6()
-            .px_4()
-            .pb_4()
-            .child(avatar(picture, PICTURE_SIZE, cx))
+            .child(picture)
             .child(
                 div()
                     .flex_1()

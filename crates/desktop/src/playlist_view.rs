@@ -17,8 +17,8 @@ use crate::playback::Playback;
 use crate::playlist_dialog::PlaylistDialogMode;
 use crate::search_view::observe_opening;
 use crate::ui::{
-    CARD_COVER_SIZE, failed, format_time, friendly_error, is_current_track, mark_playing,
-    placeholder, skeleton_rows, thumbnail,
+    CARD_COVER_SIZE, HERO_COVER_RADIUS, failed, format_time, friendly_error, hero,
+    is_current_track, mark_playing, placeholder, skeleton_rows, thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -220,13 +220,19 @@ impl PlaylistView {
             .filter(|playlist| self.account.read(cx).is_editable(&playlist.id))
             .cloned();
 
-        div()
+        let seed = cover
+            .as_deref()
+            .and_then(|cover| self.covers.update(cx, |covers, cx| covers.seed(cover, cx)));
+        hero(seed, cx)
             .flex()
             .items_end()
             .gap_6()
-            .px_4()
-            .pb_4()
-            .child(thumbnail(cover, COVER_WIDTH, 16., cx))
+            .child(
+                div()
+                    .rounded(px(HERO_COVER_RADIUS))
+                    .shadow_lg()
+                    .child(thumbnail(cover, COVER_WIDTH, HERO_COVER_RADIUS, cx)),
+            )
             .child(
                 div()
                     .flex_1()

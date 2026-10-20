@@ -1007,7 +1007,7 @@ fn crossfade(cx: &gpui::App) -> Duration {
 }
 
 /// The cover color best suited for a theme, as Material You picks it from a wallpaper.
-fn seed_color(cover: &Path) -> Option<Hsla> {
+pub(crate) fn seed_color(cover: &Path) -> Option<Hsla> {
     // Decoded here rather than with `ImageReader::open`, which panics on a damaged file; on a
     // GPUI worker thread that panic aborts the whole app.
     let decoded = image::ImageReader::open(cover)

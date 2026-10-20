@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::f32::consts::TAU;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Div, ElementId, Entity, FontWeight, ObjectFit, SharedString,
-    Stateful, StyledImage, Window, div, img, prelude::*, px,
+    AnyElement, App, ClickEvent, Div, ElementId, Entity, FontWeight, Hsla, ObjectFit, SharedString,
+    Stateful, StyledImage, Window, div, img, linear_color_stop, linear_gradient, prelude::*, px,
 };
 use gpui_m3::{Button, IconButton, LoadingIndicator, Shape, ShapeName, Spring, Theme, motion};
 use ytm_core::Track;
@@ -106,6 +106,26 @@ pub fn mark_playing(row: Div, playing: bool, cx: &App) -> Div {
                 .rounded_full()
                 .bg(s.primary),
         )
+}
+
+/// Corner of the large covers in page headers: M3 Expressive's extra-large shape.
+pub const HERO_COVER_RADIUS: f32 = 28.;
+
+/// The header of an album, artist or playlist page: a panel washed with the color of its cover
+/// (`seed`, once known), fading into the page.
+pub fn hero(seed: Option<Hsla>, cx: &App) -> Div {
+    let s = Theme::of(cx);
+    let tint = seed.unwrap_or(s.primary_container);
+    div()
+        .mx_2()
+        .mb_4()
+        .p_6()
+        .rounded(px(HERO_COVER_RADIUS + 8.))
+        .bg(linear_gradient(
+            180.,
+            linear_color_stop(gpui_m3::theme::alpha(tint, 0.42), 0.),
+            linear_color_stop(gpui_m3::theme::alpha(tint, 0.), 1.),
+        ))
 }
 
 pub const CARD_WIDTH: f32 = 180.;
