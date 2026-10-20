@@ -12,8 +12,8 @@ use crate::navigation::Navigation;
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening, track_row};
 use crate::ui::{
-    CARD_COVER_SIZE, avatar, compact_count, placeholder, section_title, skeleton, skeleton_cards,
-    skeleton_rows,
+    CARD_COVER_SIZE, avatar, compact_count, failed, friendly_error, section_title, skeleton,
+    skeleton_cards, skeleton_rows,
 };
 
 const PICTURE_SIZE: f32 = 200.;
@@ -35,6 +35,8 @@ pub struct ArtistView {
     navigation: Entity<Navigation>,
     /// What the card that opened it already knew, shown while the page loads.
     summary: Option<Artist>,
+    /// The artist on screen, to load it again after a failure.
+    id: String,
     state: State,
     /// Bumped on every `open`, so a slow artist cannot replace a newer one.
     generation: u64,
@@ -61,6 +63,7 @@ impl ArtistView {
             covers,
             navigation,
             summary: None,
+            id: String::new(),
             state: State::Loading,
             generation: 0,
             _subscriptions: subscriptions,
@@ -70,7 +73,8 @@ impl ArtistView {
     pub fn open(&mut self, id: String, summary: Option<Artist>, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
-        let request = self.client.artist(id);
+        let request = self.client.artist(id.clone());
+        self.id = id;
         self.summary = summary;
         self.state = State::Loading;
         cx.notify();
@@ -83,7 +87,7 @@ impl ArtistView {
                 }
                 this.state = match page {
                     Ok(page) => State::Ready(page),
-                    Err(err) => State::Failed(format!("{err:#}").into()),
+                    Err(err) => State::Failed(friendly_error(&err)),
                 };
                 cx.notify();
             })
@@ -283,8 +287,15 @@ impl Render for ArtistView {
                 section("Álbumes y sencillos", skeleton_cards(6, false)),
             ],
             State::Failed(error) => {
-                return placeholder("No se pudo abrir el artista", error.clone(), cx)
-                    .into_any_element();
+                return failed(
+                    "No se pudo abrir el artista",
+                    error.clone(),
+                    cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.open(this.id.clone(), this.summary.clone(), cx)
+                    }),
+                    cx,
+                )
+                .into_any_element();
             }
             State::Ready(page) => {
                 let page = page.clone();

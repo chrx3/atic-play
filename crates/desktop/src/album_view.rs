@@ -13,7 +13,9 @@ use crate::download_ui::{download_button, downloaded_mark};
 use crate::downloads::Downloads;
 use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
-use crate::ui::{CARD_COVER_SIZE, format_time, placeholder, skeleton, skeleton_rows, thumbnail};
+use crate::ui::{
+    CARD_COVER_SIZE, failed, format_time, friendly_error, skeleton, skeleton_rows, thumbnail,
+};
 
 const COVER_WIDTH: f32 = 200.;
 
@@ -32,6 +34,8 @@ pub struct AlbumView {
     downloads: Entity<Downloads>,
     /// What the card that opened it already knew, shown while the tracks load.
     summary: Option<Album>,
+    /// The album on screen, to load it again after a failure.
+    id: String,
     state: State,
     /// Bumped on every `open`, so a slow album cannot replace a newer one.
     generation: u64,
@@ -59,6 +63,7 @@ impl AlbumView {
             navigation,
             downloads,
             summary: None,
+            id: String::new(),
             state: State::Loading,
             generation: 0,
             _subscriptions: subscriptions,
@@ -68,7 +73,8 @@ impl AlbumView {
     pub fn open(&mut self, id: String, summary: Option<Album>, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
-        let request = self.client.album(id);
+        let request = self.client.album(id.clone());
+        self.id = id;
         self.summary = summary;
         self.state = State::Loading;
         cx.notify();
@@ -81,7 +87,7 @@ impl AlbumView {
                 }
                 this.state = match page {
                     Ok(page) => State::Ready(page),
-                    Err(err) => State::Failed(format!("{err:#}").into()),
+                    Err(err) => State::Failed(friendly_error(&err)),
                 };
                 cx.notify();
             })
@@ -275,8 +281,15 @@ impl Render for AlbumView {
         let body = match &self.state {
             State::Loading => div().px_4().child(skeleton_rows(10)).into_any_element(),
             State::Failed(error) => {
-                return placeholder("No se pudo abrir el álbum", error.clone(), cx)
-                    .into_any_element();
+                return failed(
+                    "No se pudo abrir el álbum",
+                    error.clone(),
+                    cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.open(this.id.clone(), this.summary.clone(), cx)
+                    }),
+                    cx,
+                )
+                .into_any_element();
             }
             State::Ready(page) if page.tracks.is_empty() => div()
                 .pt_16()

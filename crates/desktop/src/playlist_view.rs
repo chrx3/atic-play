@@ -13,7 +13,9 @@ use crate::download_ui::{download_button, downloaded_mark};
 use crate::downloads::Downloads;
 use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
-use crate::ui::{CARD_COVER_SIZE, format_time, placeholder, skeleton_rows, thumbnail};
+use crate::ui::{
+    CARD_COVER_SIZE, failed, format_time, friendly_error, placeholder, skeleton_rows, thumbnail,
+};
 
 const THUMB_SIZE: u32 = 120;
 const COVER_WIDTH: f32 = 200.;
@@ -82,7 +84,7 @@ impl PlaylistView {
                 }
                 this.state = match page {
                     Ok(page) => State::Ready(page),
-                    Err(err) => State::Failed(format!("{err:#}").into()),
+                    Err(err) => State::Failed(friendly_error(&err)),
                 };
                 cx.notify();
             })
@@ -277,14 +279,18 @@ impl Render for PlaylistView {
         let s = *Theme::of(cx);
         let body = match &self.state {
             State::Loading => div().px_4().child(skeleton_rows(10)).into_any_element(),
-            State::Failed(error) => div()
-                .pt_16()
-                .px_4()
-                .flex()
-                .justify_center()
-                .text_color(s.error)
-                .child(format!("No se pudo abrir la playlist: {error}"))
-                .into_any_element(),
+            State::Failed(error) => failed(
+                "No se pudo abrir la playlist",
+                error.clone(),
+                cx.listener(|this, _: &ClickEvent, _, cx| {
+                    if let Some(playlist) = this.summary.clone() {
+                        this.open(playlist, cx);
+                    }
+                }),
+                cx,
+            )
+            .pt_16()
+            .into_any_element(),
             State::Ready(page) if page.tracks.is_empty() => div()
                 .pt_16()
                 .flex()

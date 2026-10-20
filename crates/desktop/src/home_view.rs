@@ -11,8 +11,8 @@ use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::search_view::{album_card, artist_card, observe_opening};
 use crate::ui::{
-    CARD_COVER_SIZE, CARD_WIDTH, format_time, media_card, placeholder, section_title, skeleton,
-    skeleton_cards, skeleton_rows, thumbnail,
+    CARD_COVER_SIZE, CARD_WIDTH, format_time, friendly_error, media_card, placeholder,
+    section_title, skeleton, skeleton_cards, skeleton_rows, thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -149,7 +149,7 @@ impl HomeView {
             this.update(cx, |this, cx| {
                 this.state = match result {
                     Ok(feed) => State::Ready(feed),
-                    Err(err) => State::Failed(format!("{err:#}").into()),
+                    Err(err) => State::Failed(friendly_error(&err)),
                 };
                 cx.notify();
             })

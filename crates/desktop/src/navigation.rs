@@ -10,6 +10,7 @@ use ytm_core::{Album, Artist, Track};
 use crate::account::Account;
 use crate::assets;
 use crate::playback::Playback;
+use crate::toasts;
 
 pub enum NavigationEvent {
     /// The album page; the summary, when known, is shown while the album loads.
@@ -123,6 +124,7 @@ pub fn render_track_menu(
         "Reproducir a continuación",
         assets::SKIP_NEXT,
         Box::new(move |track, _, cx| {
+            toasts::show(format!("«{}» suena a continuación", track.title), cx);
             let track = track.clone();
             to_playback.update(cx, |playback, cx| playback.play_next(track, cx));
         }),
@@ -133,6 +135,7 @@ pub fn render_track_menu(
         "Agregar a la cola",
         assets::QUEUE,
         Box::new(move |track, _, cx| {
+            toasts::show(format!("«{}» agregada a la cola", track.title), cx);
             let track = track.clone();
             to_playback.update(cx, |playback, cx| playback.add_to_queue(track, cx));
         }),
@@ -181,6 +184,14 @@ pub fn render_track_menu(
                 assets::HEART
             },
             Box::new(move |track, _, cx| {
+                toasts::show(
+                    if liked {
+                        "Quitada de «Me gusta»"
+                    } else {
+                        "Agregada a «Me gusta»"
+                    },
+                    cx,
+                );
                 let track = track.clone();
                 to_account.update(cx, |account, cx| account.toggle_like(track, cx));
             }),

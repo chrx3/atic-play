@@ -9,6 +9,7 @@ use ytm_core::{Audio, AudioPlayer, Client, Queue, RepeatMode, Track};
 use crate::history::History;
 use crate::media_session::{MediaEvent, MediaSession, MediaState, SeekDirection};
 use crate::settings;
+use crate::toasts;
 
 const COVER_SIZE: u32 = 544;
 /// How often the progress follows the playback position and track ends are noticed.
@@ -24,6 +25,11 @@ const MEDIA_SEEK_STEP: Duration = Duration::from_secs(10);
 /// Without crossfade, the next track is queued behind the current one this long before the end,
 /// so it follows without a gap. Ample against tick timing and duration rounding.
 const GAPLESS_LEAD: Duration = Duration::from_secs(2);
+/// Tracks that fail to play are skipped, but only this many in a row: past that, something is
+/// wrong for every track (no connection, yt-dlp broken) and skipping would run through the queue.
+const MAX_SKIPS_IN_A_ROW: u32 = 3;
+/// How long to wait before asking for the radio again after it failed.
+const RADIO_RETRY_AFTER: Duration = Duration::from_secs(15);
 /// A track counts as played, for the history, after this long (or half of a shorter track).
 const PLAY_COUNTS_AFTER: Duration = Duration::from_secs(30);
 
@@ -42,6 +48,10 @@ pub struct Playback {
     ended: bool,
     /// The track whose radio was last requested, so it is requested once.
     radio_for: Option<String>,
+    /// The radio is on its way.
+    radio_pending: bool,
+    /// Tracks skipped in a row because they failed to play.
+    skips_in_a_row: u32,
     /// The next track while it downloads, so skipping to it (or reaching it) is instant.
     prefetching: Option<(String, Task<()>)>,
     /// The next track once downloaded; it is also prepared in the player for a seamless
@@ -113,6 +123,8 @@ impl Playback {
             started: false,
             ended: false,
             radio_for: None,
+            radio_pending: false,
+            skips_in_a_row: 0,
             prefetching: None,
             prefetched: None,
             play_when_prefetched: false,
@@ -287,6 +299,27 @@ impl Playback {
             self.prefetch_next(cx);
         }
         cx.notify();
+    }
+
+    /// Takes a track that has not played yet out of the queue.
+    pub fn remove_from_queue(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.queue.remove(index);
+        self.settings_dirty = true;
+        self.prefetch_next(cx);
+        cx.notify();
+    }
+
+    /// Takes everything after the current track out of the queue.
+    pub fn clear_upcoming(&mut self, cx: &mut Context<Self>) {
+        self.queue.clear_upcoming();
+        self.settings_dirty = true;
+        self.prefetch_next(cx);
+        cx.notify();
+    }
+
+    /// Similar songs are being fetched to keep the queue going.
+    pub fn is_fetching_radio(&self) -> bool {
+        self.radio_pending
     }
 
     pub fn play_index(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -498,6 +531,22 @@ impl Playback {
         let Some(track) = self.current().cloned() else {
             return;
         };
+        // No device at startup (none plugged in, or busy): try again now that the user wants to
+        // play.
+        if self.player.is_none() {
+            match AudioPlayer::new() {
+                Ok(player) => {
+                    self.player = Some(player);
+                    self.error = None;
+                    self.apply_volume();
+                }
+                Err(err) => {
+                    self.error = Some(format!("No se pudo abrir el audio: {err:#}").into());
+                    cx.notify();
+                    return;
+                }
+            }
+        }
         let Some(player) = &mut self.player else {
             return;
         };
@@ -558,6 +607,7 @@ impl Playback {
         match started {
             Ok(()) => {
                 self.started = true;
+                self.skips_in_a_row = 0;
                 self.apply_volume();
                 if let (Some(at), Some(player)) = (self.resume_at.take(), &self.player) {
                     player.seek(at);
@@ -571,10 +621,31 @@ impl Playback {
                 self.prefetch_next(cx);
             }
             Err(err) => {
-                self.error = Some(format!("No se pudo reproducir: {err:#}").into());
+                let title = self.current().map(|track| track.title.clone());
+                log::warn!("could not play {title:?}: {err:#}");
+                self.skip_failed(title, cx);
             }
         }
         cx.notify();
+    }
+
+    /// Moves past a track that could not be played, unless several have failed in a row.
+    fn skip_failed(&mut self, title: Option<String>, cx: &mut Context<Self>) {
+        let title = title.unwrap_or_default();
+        self.skips_in_a_row += 1;
+        if self.skips_in_a_row <= MAX_SKIPS_IN_A_ROW && self.queue.advance(false).is_some() {
+            toasts::show(
+                format!("No se pudo reproducir «{title}»; pasando a la siguiente"),
+                cx,
+            );
+            self.load_current(cx);
+            return;
+        }
+        self.skips_in_a_row = 0;
+        self.error = Some(
+            format!("No se pudo reproducir «{title}». Revisa tu conexión e inténtalo de nuevo.")
+                .into(),
+        );
     }
 
     /// Fetches the track's cover, then its theme seed, and shows both when they arrive.
@@ -713,11 +784,13 @@ impl Playback {
             return;
         }
         self.radio_for = Some(track_id.clone());
+        self.radio_pending = true;
 
         let radio = self.client.radio(track_id.clone());
         cx.spawn(async move |this, cx| match radio.await {
             Ok(tracks) => {
                 this.update(cx, |this, cx| {
+                    this.radio_pending = false;
                     this.queue.append(tracks);
                     this.settings_dirty = true;
                     if this.ended && this.queue.advance(false).is_some() {
@@ -729,7 +802,23 @@ impl Playback {
                 })
                 .ok();
             }
-            Err(err) => log::warn!("radio for {track_id}: {err:#}"),
+            Err(err) => {
+                log::warn!("radio for {track_id}: {err:#}");
+                this.update(cx, |this, cx| {
+                    this.radio_pending = false;
+                    cx.notify();
+                })
+                .ok();
+                // Ask again later, if the queue still needs it.
+                cx.background_executor().timer(RADIO_RETRY_AFTER).await;
+                this.update(cx, |this, cx| {
+                    if this.radio_for.as_ref() == Some(&track_id) {
+                        this.radio_for = None;
+                        this.refill_radio(cx);
+                    }
+                })
+                .ok();
+            }
         })
         .detach();
     }
@@ -771,7 +860,7 @@ impl Playback {
         }
     }
 
-    fn seek_by(&mut self, direction: SeekDirection, amount: Duration, cx: &mut Context<Self>) {
+    pub fn seek_by(&mut self, direction: SeekDirection, amount: Duration, cx: &mut Context<Self>) {
         let position = match direction {
             SeekDirection::Forward => self.position() + amount,
             SeekDirection::Backward => self.position().saturating_sub(amount),

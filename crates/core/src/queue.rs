@@ -137,6 +137,31 @@ impl Queue {
         }
     }
 
+    /// Takes a track that has not played yet out of the queue. The current track stays.
+    pub fn remove(&mut self, index: usize) {
+        if index >= self.tracks.len() || Some(index) == self.current {
+            return;
+        }
+        let removed = self.tracks.remove(index);
+        if let Some(current) = self.current
+            && index < current
+        {
+            self.current = Some(current - 1);
+        }
+        if let Some(unshuffled) = &mut self.unshuffled {
+            unshuffled.retain(|queued| queued.id != removed.id);
+        }
+    }
+
+    /// Takes every track after the current one out of the queue.
+    pub fn clear_upcoming(&mut self) {
+        let keep = self.current.map_or(0, |index| index + 1);
+        let removed: Vec<String> = self.tracks.drain(keep..).map(|track| track.id).collect();
+        if let Some(unshuffled) = &mut self.unshuffled {
+            unshuffled.retain(|queued| !removed.contains(&queued.id));
+        }
+    }
+
     pub fn jump_to(&mut self, index: usize) -> Option<&Track> {
         if index < self.tracks.len() {
             self.current = Some(index);
@@ -348,6 +373,34 @@ mod tests {
         let mut queue = Queue::default();
         queue.insert_next(track("x"));
         assert_eq!(current_id(&queue), Some("x"));
+    }
+
+    #[test]
+    fn remove_keeps_the_current_track_playing() {
+        let mut queue = queue_of(&["a", "b", "c", "d"], 2);
+        queue.remove(0);
+        assert_eq!(ids(&queue), ["b", "c", "d"]);
+        assert_eq!(current_id(&queue), Some("c"));
+        queue.remove(1);
+        assert_eq!(
+            ids(&queue),
+            ["b", "c", "d"],
+            "the current track is not removed"
+        );
+        queue.remove(2);
+        assert_eq!(ids(&queue), ["b", "c"]);
+        assert_eq!(current_id(&queue), Some("c"));
+    }
+
+    #[test]
+    fn clear_upcoming_survives_turning_shuffle_off() {
+        let mut queue = queue_of(&["a", "b", "c", "d"], 1);
+        queue.set_shuffle(true);
+        queue.clear_upcoming();
+        assert_eq!(ids(&queue), ["a", "b"]);
+        queue.set_shuffle(false);
+        assert_eq!(ids(&queue), ["a", "b"]);
+        assert_eq!(current_id(&queue), Some("b"));
     }
 
     #[test]

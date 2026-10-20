@@ -24,15 +24,18 @@ mod search_box;
 mod search_view;
 mod settings;
 mod settings_view;
+mod shortcuts;
 mod sidebar;
 mod sign_in;
+mod toasts;
 mod ui;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use gpui::{
-    App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size,
+    App, Application, Bounds, Focusable, TitlebarOptions, WindowBounds, WindowOptions, prelude::*,
+    px, size,
 };
 use gpui_m3::Theme;
 use ytm_core::Client;
@@ -87,6 +90,8 @@ fn main() -> ExitCode {
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
             gpui_m3::init(cx);
+            shortcuts::bind(cx);
+            toasts::init(cx);
             Theme::set(true, None, cx);
 
             let data_dir = data_dir();
@@ -128,7 +133,10 @@ fn main() -> ExitCode {
                         settings::update(cx, |settings| settings.window = Some(bounds));
                         true
                     });
-                    cx.new(|cx| YtmApp::new(client, data_dir, cx))
+                    let app = cx.new(|cx| YtmApp::new(client, data_dir, cx));
+                    // The keyboard shortcuts work from the start, before anything is clicked.
+                    window.focus(&app.focus_handle(cx));
+                    app
                 },
             )
             .expect("could not open the main window");

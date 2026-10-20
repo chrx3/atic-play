@@ -1,7 +1,7 @@
 use gpui::{
     ClickEvent, Context, ElementId, Entity, FontWeight, Subscription, Window, div, prelude::*, px,
 };
-use gpui_m3::{ListItem, ShapeName, Spring, Theme, motion};
+use gpui_m3::{Button, IconButton, ListItem, ShapeName, Spring, Theme, motion};
 
 use crate::covers::Covers;
 use crate::download_ui::downloaded_mark;
@@ -45,6 +45,7 @@ impl QueuePanel {
                     playback.queue().current_index(),
                     playback.queue().tracks().len(),
                     playback.queue().shuffle(),
+                    playback.is_fetching_radio(),
                 );
                 if last_seen != Some(seen) {
                     last_seen = Some(seen);
@@ -82,6 +83,12 @@ impl Render for QueuePanel {
             .take(MAX_UPCOMING)
             .cloned()
             .collect();
+        let hidden = playback
+            .queue()
+            .upcoming()
+            .len()
+            .saturating_sub(MAX_UPCOMING);
+        let fetching_radio = playback.is_fetching_radio();
 
         let cover_path = self.covers.update(cx, |covers, cx| {
             covers.get(&current.id, current.cover_url.as_deref(), COVER_SIZE, cx)
@@ -108,10 +115,25 @@ impl Render for QueuePanel {
                 None => track.artists.clone(),
             };
             let mark = downloaded_mark(("upcoming-downloaded", index), &track.id, &downloads, cx);
+            let to_remove = self.playback.clone();
+            let remove = IconButton::new(("upcoming-remove", index), "x")
+                .size(px(32.))
+                .tooltip("Quitar de la cola")
+                .on_click(move |_: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    to_remove.update(cx, |playback, cx| playback.remove_from_queue(index, cx));
+                });
             let item = ListItem::new(("upcoming", index), track.title.clone())
                 .subtitle(subtitle)
                 .leading(thumbnail(thumb, 40., 6., cx))
-                .trailing(div().children(mark))
+                .trailing(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .children(mark)
+                        .child(remove),
+                )
                 .on_click(move |_: &ClickEvent, _, cx| {
                     playback.update(cx, |playback, cx| playback.play_index(index, cx));
                 });
@@ -151,6 +173,7 @@ impl Render for QueuePanel {
                         div()
                             .text_size(px(20.))
                             .font_weight(FontWeight::MEDIUM)
+                            .line_clamp(2)
                             .child(current.title.clone()),
                     )
                     .child(
@@ -165,15 +188,41 @@ impl Render for QueuePanel {
                             .child(album)
                     })),
             )
-            .child(section_title("A continuación"))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(section_title("A continuación"))
+                    .when(!rows.is_empty(), |header| {
+                        let playback = self.playback.clone();
+                        header.child(Button::new("clear-queue", "Vaciar").text().on_click(
+                            move |_: &ClickEvent, _, cx| {
+                                playback.update(cx, |playback, cx| playback.clear_upcoming(cx));
+                            },
+                        ))
+                    }),
+            )
             .child(if rows.is_empty() {
                 div()
                     .text_sm()
                     .text_color(s.on_surface_variant)
-                    .child("Buscando canciones parecidas…")
+                    .child(if fetching_radio {
+                        "Buscando canciones parecidas…"
+                    } else {
+                        "No hay más canciones en la cola"
+                    })
                     .into_any_element()
             } else {
                 div().flex().flex_col().children(rows).into_any_element()
+            })
+            .when(hidden > 0, |panel| {
+                panel.child(
+                    div()
+                        .text_sm()
+                        .text_color(s.on_surface_variant)
+                        .child(format!("y {hidden} más")),
+                )
             })
             .into_any_element()
     }

@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, ClickEvent, Div, ElementId, Entity, FontWeight, ObjectFit, SharedString,
     Stateful, StyledImage, Window, div, img, prelude::*, px,
 };
-use gpui_m3::{IconButton, LoadingIndicator, Shape, ShapeName, Spring, Theme, motion};
+use gpui_m3::{Button, IconButton, LoadingIndicator, Shape, ShapeName, Spring, Theme, motion};
 use ytm_core::Track;
 
 use crate::account::Account;
@@ -215,6 +215,42 @@ pub fn placeholder(title: impl Into<SharedString>, body: impl Into<SharedString>
                 .text_color(Theme::of(cx).on_surface_variant)
                 .child(body.into()),
         )
+}
+
+/// A load that failed: what failed, why in plain words, and a button to try again.
+pub fn failed(
+    title: impl Into<SharedString>,
+    error: impl Into<SharedString>,
+    on_retry: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
+) -> Div {
+    placeholder(title, error, cx).child(
+        div().pt_2().child(
+            Button::new("retry", "Reintentar")
+                .filled()
+                .on_click(on_retry),
+        ),
+    )
+}
+
+/// What to tell the user about a failed request; the details go to the log.
+pub fn friendly_error(err: &anyhow::Error) -> SharedString {
+    log::warn!("{err:#}");
+    let details = format!("{err:#}").to_lowercase();
+    let offline = [
+        "timed out",
+        "timeout",
+        "connect",
+        "dns",
+        "error sending request",
+    ]
+    .iter()
+    .any(|sign| details.contains(sign));
+    if offline {
+        "No hay conexión con YouTube Music. Revisa tu internet e inténtalo de nuevo.".into()
+    } else {
+        "Algo salió mal al cargar. Inténtalo de nuevo en un momento.".into()
+    }
 }
 
 /// Seconds per skeleton pulse.

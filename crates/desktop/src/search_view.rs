@@ -15,8 +15,9 @@ use crate::downloads::Downloads;
 use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
 use crate::ui::{
-    CARD_COVER_SIZE, CARD_WIDTH, MEDIA_CARD_GROUP, avatar, compact_count, format_time, media_card,
-    placeholder, section_title, skeleton_cards, skeleton_rows, thumbnail,
+    CARD_COVER_SIZE, CARD_WIDTH, MEDIA_CARD_GROUP, avatar, compact_count, format_time,
+    friendly_error, media_card, placeholder, section_title, skeleton_cards, skeleton_rows,
+    thumbnail,
 };
 
 const THUMB_SIZE: u32 = 120;
@@ -125,7 +126,7 @@ impl SearchView {
                 }
                 *slot(this) = match result {
                     Ok(items) => Load::Ready(items),
-                    Err(err) => Load::Failed(format!("{err:#}").into()),
+                    Err(err) => Load::Failed(friendly_error(&err)),
                 };
                 cx.notify();
             })
@@ -290,7 +291,7 @@ fn status<T>(load: &Load<T>, tab: Tab, cx: &mut Context<SearchView>) -> AnyEleme
         }
         Load::Failed(error) => div()
             .text_color(s.error)
-            .child(format!("La búsqueda falló: {error}"))
+            .child(error.clone())
             .into_any_element(),
         Load::Ready(_) => div()
             .text_color(s.on_surface_variant)

@@ -1,11 +1,12 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use gpui::{
-    AnyElement, AnyView, ClickEvent, Context, Div, Entity, Hsla, StyleRefinement, Subscription,
-    Window, div, prelude::*, px,
+    AnyElement, AnyView, ClickEvent, Context, Div, Entity, FocusHandle, Focusable, Hsla,
+    MouseButton, NavigationDirection, StyleRefinement, Subscription, Window, div, prelude::*, px,
 };
-use gpui_m3::{IconButton, Segment, SegmentedButtons, Spring, Theme, animate_theme, motion};
-use ytm_core::{Client, Playlist};
+use gpui_m3::{IconButton, Segment, SegmentedButtons, Spring, Theme, Toast, animate_theme, motion};
+use ytm_core::{Album, Artist, Client, Playlist};
 
 use crate::account::Account;
 use crate::album_view::AlbumView;
@@ -15,6 +16,7 @@ use crate::history_view::HistoryView;
 use crate::home_view::HomeView;
 use crate::library_view::{LibraryEvent, LibraryView};
 use crate::lyrics_panel::LyricsPanel;
+use crate::media_session::SeekDirection;
 use crate::navigation::{Navigation, NavigationEvent, render_track_menu};
 use crate::now_playing_view::{NowPlayingEvent, NowPlayingView};
 use crate::playback::Playback;
@@ -25,8 +27,13 @@ use crate::search_box::{SearchBox, SearchBoxEvent};
 use crate::search_view::SearchView;
 use crate::settings;
 use crate::settings_view::{SettingsEvent, SettingsView};
+use crate::shortcuts::{
+    self, Close, CycleRepeat, GoBack, NextTrack, PreviousTrack, SeekBackward, SeekForward,
+    ToggleMute, TogglePlay, ToggleShuffle, VolumeDown, VolumeUp,
+};
 use crate::sidebar::{Route, Sidebar};
 use crate::sign_in::SignInDialog;
+use crate::toasts::Toasts;
 use crate::ui::placeholder;
 
 const SIDEBAR_WIDTH: f32 = 240.;
@@ -35,6 +42,34 @@ const QUEUE_WIDTH: f32 = 340.;
 const ROUTE_SLIDE: f32 = 24.;
 /// How far "Reproduciendo" rises as it opens.
 const NOW_PLAYING_SLIDE: f32 = 64.;
+/// Older pages are forgotten past this many.
+const MAX_BACK_PAGES: usize = 50;
+/// What the arrow keys move.
+const SEEK_STEP: Duration = Duration::from_secs(5);
+const VOLUME_STEP: f32 = 0.05;
+/// Room for the player bar under the toasts.
+const TOAST_BOTTOM: f32 = 104.;
+
+/// A page the back button returns to: a section or what was opened in it.
+#[derive(Clone)]
+enum Page {
+    Route(Route),
+    Playlist(Playlist),
+    Album { id: String, summary: Option<Album> },
+    Artist { id: String, summary: Option<Artist> },
+}
+
+impl Page {
+    fn is_same(&self, other: &Page) -> bool {
+        match (self, other) {
+            (Page::Route(a), Page::Route(b)) => a == b,
+            (Page::Playlist(a), Page::Playlist(b)) => a.id == b.id,
+            (Page::Album { id: a, .. }, Page::Album { id: b, .. })
+            | (Page::Artist { id: a, .. }, Page::Artist { id: b, .. }) => a == b,
+            _ => false,
+        }
+    }
+}
 
 /// What the right panel shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +81,10 @@ enum SidePanel {
 /// The window: sidebar, content and queue panel above the player bar.
 pub struct YtmApp {
     route: Route,
+    /// The page on screen and the ones before it, for going back.
+    page: Page,
+    back: Vec<Page>,
+    focus_handle: FocusHandle,
     /// The id of the playlist page on screen, to highlight it in the sidebar.
     open_playlist: Option<String>,
     account: Entity<Account>,
@@ -159,7 +198,7 @@ impl YtmApp {
         let subscriptions = vec![
             cx.subscribe(&search_box, |this, _, event: &SearchBoxEvent, cx| {
                 let SearchBoxEvent::Search(query) = event;
-                this.navigate(Route::Search, cx);
+                this.visit(Page::Route(Route::Search), cx);
                 this.search_view
                     .update(cx, |view, cx| view.search(query.clone(), cx));
             }),
@@ -193,23 +232,27 @@ impl YtmApp {
                         cx.notify();
                     }
                     LibraryEvent::OpenPlaylist(playlist) => {
-                        this.open_playlist(playlist.clone(), cx)
+                        this.visit(Page::Playlist(playlist.clone()), cx)
                     }
                 },
             ),
             cx.subscribe(
                 &navigation,
                 |this, _, event: &NavigationEvent, cx| match event {
-                    NavigationEvent::OpenAlbum { id, summary } => {
-                        this.navigate(Route::Album, cx);
-                        this.album_view
-                            .update(cx, |view, cx| view.open(id.clone(), summary.clone(), cx));
-                    }
-                    NavigationEvent::OpenArtist { id, summary } => {
-                        this.navigate(Route::Artist, cx);
-                        this.artist_view
-                            .update(cx, |view, cx| view.open(id.clone(), summary.clone(), cx));
-                    }
+                    NavigationEvent::OpenAlbum { id, summary } => this.visit(
+                        Page::Album {
+                            id: id.clone(),
+                            summary: summary.clone(),
+                        },
+                        cx,
+                    ),
+                    NavigationEvent::OpenArtist { id, summary } => this.visit(
+                        Page::Artist {
+                            id: id.clone(),
+                            summary: summary.clone(),
+                        },
+                        cx,
+                    ),
                 },
             ),
             cx.subscribe(
@@ -228,6 +271,7 @@ impl YtmApp {
             ),
             // The song menu opens and closes.
             cx.observe(&navigation, |_, _, cx| cx.notify()),
+            cx.observe(&Toasts::global(cx), |_, _, cx| cx.notify()),
             // The sidebar shows the session and the playlists; the dialog closes once signed in.
             cx.observe(&account, |this, account, cx| {
                 if account.read(cx).is_signed_in() {
@@ -257,6 +301,9 @@ impl YtmApp {
 
         YtmApp {
             route: Route::Home,
+            page: Page::Route(Route::Home),
+            back: Vec::new(),
+            focus_handle: cx.focus_handle(),
             open_playlist: None,
             account,
             playback,
@@ -283,6 +330,65 @@ impl YtmApp {
             applied_seed: None,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Goes to `page`, remembering the one on screen for going back.
+    fn visit(&mut self, page: Page, cx: &mut Context<Self>) {
+        if !page.is_same(&self.page) {
+            let left = std::mem::replace(&mut self.page, page.clone());
+            self.back.push(left);
+            if self.back.len() > MAX_BACK_PAGES {
+                self.back.remove(0);
+            }
+        }
+        self.show(page, cx);
+    }
+
+    /// Closes "Reproduciendo", or returns to the page before this one.
+    fn go_back(&mut self, cx: &mut Context<Self>) {
+        if self.now_playing_open {
+            self.set_now_playing_open(false, cx);
+            return;
+        }
+        if let Some(page) = self.back.pop() {
+            self.page = page.clone();
+            self.show(page, cx);
+        }
+    }
+
+    fn show(&mut self, page: Page, cx: &mut Context<Self>) {
+        match page {
+            Page::Route(route) => self.navigate(route, cx),
+            Page::Playlist(playlist) => self.open_playlist(playlist, cx),
+            Page::Album { id, summary } => {
+                self.navigate(Route::Album, cx);
+                self.album_view
+                    .update(cx, |view, cx| view.open(id, summary, cx));
+            }
+            Page::Artist { id, summary } => {
+                self.navigate(Route::Artist, cx);
+                self.artist_view
+                    .update(cx, |view, cx| view.open(id, summary, cx));
+            }
+        }
+    }
+
+    /// Escape: closes the song menu, then "Reproduciendo".
+    fn close(&mut self, cx: &mut Context<Self>) {
+        if self.navigation.read(cx).track_menu().is_some() {
+            self.navigation
+                .update(cx, |navigation, cx| navigation.close_track_menu(cx));
+        } else {
+            self.set_now_playing_open(false, cx);
+        }
+    }
+
+    fn update_playback(
+        &self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Playback, &mut Context<Playback>),
+    ) {
+        self.playback.update(cx, f);
     }
 
     /// Shows `route`, leaving "Reproduciendo" if it is open.
@@ -435,12 +541,12 @@ impl Render for YtmApp {
             self.account.clone(),
             move |route, _, cx| {
                 navigate
-                    .update(cx, |this, cx| this.navigate(route, cx))
+                    .update(cx, |this, cx| this.visit(Page::Route(route), cx))
                     .ok();
             },
             move |playlist, _, cx| {
                 open_playlist
-                    .update(cx, |this, cx| this.open_playlist(playlist, cx))
+                    .update(cx, |this, cx| this.visit(Page::Playlist(playlist), cx))
                     .ok();
             },
             move |_, cx| {
@@ -469,6 +575,12 @@ impl Render for YtmApp {
             .px_4()
             .py_3()
             .child(
+                IconButton::new("back", "arrow-left")
+                    .tooltip("Atrás")
+                    .disabled(self.back.is_empty())
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.go_back(cx))),
+            )
+            .child(
                 div()
                     .flex_1()
                     .max_w(px(560.))
@@ -489,7 +601,7 @@ impl Render for YtmApp {
                     .selected(self.route == Route::Settings)
                     .tooltip("Ajustes")
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.navigate(Route::Settings, cx)
+                        this.visit(Page::Route(Route::Settings), cx)
                     })),
             );
 
@@ -548,7 +660,75 @@ impl Render for YtmApp {
                 })
         };
 
+        let toast = Toasts::global(cx).read(cx).current().cloned();
+        let toast = toast.map(|(shown, text)| {
+            div()
+                .absolute()
+                .bottom(px(TOAST_BOTTOM))
+                .left_0()
+                .right_0()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .max_w(px(480.))
+                        .child(Toast::new(("toast", shown), text)),
+                )
+        });
+
         div()
+            .track_focus(&self.focus_handle)
+            .key_context(shortcuts::KEY_CONTEXT)
+            .on_action(cx.listener(|this, _: &TogglePlay, _, cx| {
+                this.update_playback(cx, Playback::toggle_pause)
+            }))
+            .on_action(
+                cx.listener(|this, _: &NextTrack, _, cx| this.update_playback(cx, Playback::next)),
+            )
+            .on_action(cx.listener(|this, _: &PreviousTrack, _, cx| {
+                this.update_playback(cx, Playback::previous)
+            }))
+            .on_action(cx.listener(|this, _: &SeekForward, _, cx| {
+                this.update_playback(cx, |playback, cx| {
+                    playback.seek_by(SeekDirection::Forward, SEEK_STEP, cx)
+                })
+            }))
+            .on_action(cx.listener(|this, _: &SeekBackward, _, cx| {
+                this.update_playback(cx, |playback, cx| {
+                    playback.seek_by(SeekDirection::Backward, SEEK_STEP, cx)
+                })
+            }))
+            .on_action(cx.listener(|this, _: &VolumeUp, _, cx| {
+                this.update_playback(cx, |playback, cx| {
+                    playback.set_volume(playback.volume() + VOLUME_STEP, cx)
+                })
+            }))
+            .on_action(cx.listener(|this, _: &VolumeDown, _, cx| {
+                this.update_playback(cx, |playback, cx| {
+                    playback.set_volume(playback.volume() - VOLUME_STEP, cx)
+                })
+            }))
+            .on_action(cx.listener(|this, _: &ToggleMute, _, cx| {
+                this.update_playback(cx, Playback::toggle_mute)
+            }))
+            .on_action(cx.listener(|this, _: &ToggleShuffle, _, cx| {
+                this.update_playback(cx, Playback::toggle_shuffle)
+            }))
+            .on_action(cx.listener(|this, _: &CycleRepeat, _, cx| {
+                this.update_playback(cx, Playback::cycle_repeat)
+            }))
+            .on_action(cx.listener(|this, _: &GoBack, _, cx| this.go_back(cx)))
+            .on_action(cx.listener(|this, _: &Close, _, cx| this.close(cx)))
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Back),
+                cx.listener(|this, _, _, cx| this.go_back(cx)),
+            )
+            // A click anywhere takes the keyboard back from a text field, so the shortcuts work
+            // again; a click on a text field gives it the keyboard right after.
+            .capture_any_mouse_down(cx.listener(|this, _, window, _| {
+                window.focus(&this.focus_handle);
+            }))
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -567,6 +747,13 @@ impl Render for YtmApp {
                 cx,
             ))
             .children(sign_in)
+            .children(toast)
+    }
+}
+
+impl Focusable for YtmApp {
+    fn focus_handle(&self, _: &gpui::App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
