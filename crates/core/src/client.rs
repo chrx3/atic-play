@@ -3,6 +3,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use rustypipe::client::{ClientType, RustyPipe, RustyPipeQuery};
@@ -20,6 +21,10 @@ use crate::loudness::normalization_gain;
 const CHUNK_SIZE: u64 = 10 * 1024 * 1024;
 
 /// M4A/AAC formats only, because that is what rodio decodes: 141 (256 kbps, Premium), then 140.
+/// How long yt-dlp may take to resolve a track before it is killed.
+const YT_DLP_TIMEOUT: Duration = Duration::from_secs(60);
+/// Attempts per chunk before a download gives up.
+const CHUNK_ATTEMPTS: u32 = 3;
 const AUDIO_FORMAT: &str = "141/140/bestaudio[ext=m4a]";
 
 /// Enough for nearly any playlist; Liked Music can hold thousands, fetched 100 per request.
@@ -324,7 +329,12 @@ impl Client {
         Ok(Client {
             runtime: Arc::new(runtime),
             pipe,
-            http: reqwest::Client::new(),
+            // No overall timeout: a track downloads in chunks for as long as it takes, but a
+            // connection that stops sending fails instead of leaving the player loading forever.
+            http: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .read_timeout(Duration::from_secs(30))
+                .build()?,
             yt_dlp: std::env::var_os("YT_DLP").unwrap_or_else(|| "yt-dlp".into()),
             cookies_path: data_dir.join("cookies.txt"),
             signed_in: Arc::default(),
@@ -887,9 +897,10 @@ async fn resolve_stream(
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let output = command
-        .output()
+    // `kill_on_drop` stops yt-dlp when the timeout drops its future.
+    let output = tokio::time::timeout(YT_DLP_TIMEOUT, command.output())
         .await
+        .map_err(|_| anyhow!("yt-dlp took more than {}s", YT_DLP_TIMEOUT.as_secs()))?
         .with_context(|| format!("could not run {}", yt_dlp.to_string_lossy()))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -921,22 +932,52 @@ async fn download(http: &reqwest::Client, stream: &ResolvedStream) -> Result<Vec
     loop {
         let start = bytes.len() as u64;
         let end = start + CHUNK_SIZE - 1;
+        let chunk_len = download_chunk(http, stream, start, end, &mut bytes).await?;
+
+        let done = match stream.size {
+            Some(size) => bytes.len() as u64 >= size,
+            // Without a known size, a short chunk means the end of the file.
+            None => (chunk_len as u64) < CHUNK_SIZE,
+        };
+        if done || chunk_len == 0 {
+            return Ok(bytes);
+        }
+    }
+}
+
+/// Appends one range to `bytes` and returns its length, retrying network and server errors so one
+/// bad chunk doesn't lose the whole track.
+async fn download_chunk(
+    http: &reqwest::Client,
+    stream: &ResolvedStream,
+    start: u64,
+    end: u64,
+    bytes: &mut Vec<u8>,
+) -> Result<usize> {
+    let mut attempt = 1;
+    loop {
         let mut request = http
             .get(&stream.url)
             .header(reqwest::header::RANGE, format!("bytes={start}-{end}"));
         if let Some(user_agent) = &stream.user_agent {
             request = request.header(reqwest::header::USER_AGENT, user_agent);
         }
-        let chunk = request.send().await?.error_for_status()?.bytes().await?;
-        bytes.extend_from_slice(&chunk);
-
-        let done = match stream.size {
-            Some(size) => bytes.len() as u64 >= size,
-            // Without a known size, a short chunk means the end of the file.
-            None => (chunk.len() as u64) < CHUNK_SIZE,
-        };
-        if done || chunk.is_empty() {
-            return Ok(bytes);
+        let result = async { request.send().await?.error_for_status()?.bytes().await }.await;
+        match result {
+            Ok(chunk) => {
+                bytes.extend_from_slice(&chunk);
+                return Ok(chunk.len());
+            }
+            // A 4xx (an expired or forbidden URL) won't get better by asking again.
+            Err(err) if err.status().is_some_and(|status| status.is_client_error()) => {
+                return Err(err.into());
+            }
+            Err(err) if attempt < CHUNK_ATTEMPTS => {
+                log::warn!("chunk at {start} failed (attempt {attempt}): {err}");
+                tokio::time::sleep(Duration::from_millis(500 * u64::from(attempt))).await;
+                attempt += 1;
+            }
+            Err(err) => return Err(err.into()),
         }
     }
 }
