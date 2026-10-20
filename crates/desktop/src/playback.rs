@@ -74,11 +74,11 @@ pub struct Playback {
     muted: bool,
     /// Where to start the restored track the first time it plays.
     resume_at: Option<Duration>,
-    /// The track starts paused (it was paused when the output device changed).
+    /// The track starts paused (the output device changed under it).
     resume_paused: bool,
-    /// The output device went away and none could be opened yet: where the track was and
-    /// whether it was paused, to pick it up once a device is back.
-    device_pending: Option<(Duration, bool)>,
+    /// The output device went away and none could be opened yet: where the track was, to pick
+    /// it up once a device is back.
+    device_pending: Option<Duration>,
     error: Option<SharedString>,
     media: Option<MediaSession>,
     media_tried: bool,
@@ -359,7 +359,7 @@ impl Playback {
         let Some(player) = &self.player else {
             // No output device: try again now, where the track was if it was waiting for one.
             if self.device_pending.is_some() {
-                self.reopen_audio_device(false, cx);
+                self.reopen_audio_device(false, true, cx);
             } else if !self.loading && self.current().is_some() {
                 self.load_current(cx);
             }
@@ -456,15 +456,16 @@ impl Playback {
     }
 
     /// When the output device goes away (unplugged, or the system switched to another), opens
-    /// the new default one and picks the track up where it was, playing or paused as it was.
-    /// The old device's player cannot be moved, so the track is loaded again (from the disk
-    /// cache, so at once).
+    /// the new default one and picks the track up where it was, paused: unplugged headphones
+    /// must not go on playing out loud, and Windows does not tell that apart from switching by
+    /// hand. The old device's player cannot be moved, so the track is loaded again (from the
+    /// disk cache, so at once).
     fn follow_audio_device(&mut self, cx: &mut Context<Self>) {
         let lost = self.player.as_ref().is_some_and(AudioPlayer::device_lost);
         if lost {
-            let state = (self.position(), !self.is_playing());
+            let position = self.position();
             // Without a track on the player there is nothing to pick up.
-            self.device_pending = self.started.then_some(state);
+            self.device_pending = self.started.then_some(position);
             self.player = None;
             self.started = false;
         } else if self.player.is_some()
@@ -473,20 +474,21 @@ impl Playback {
         {
             return;
         }
-        self.reopen_audio_device(lost, cx);
+        self.reopen_audio_device(lost, false, cx);
     }
 
-    /// Opens the default output device and resumes the track waiting for one, if any.
-    fn reopen_audio_device(&mut self, lost: bool, cx: &mut Context<Self>) {
+    /// Opens the default output device and resumes the track waiting for one, if any: paused,
+    /// unless `play` (the user pressed play).
+    fn reopen_audio_device(&mut self, lost: bool, play: bool, cx: &mut Context<Self>) {
         match AudioPlayer::new() {
             Ok(player) => {
                 self.player = Some(player);
                 self.error = None;
                 self.apply_volume();
-                if let Some((position, paused)) = self.device_pending.take() {
+                if let Some(position) = self.device_pending.take() {
                     let recorded = self.recorded == Some(self.generation);
                     self.resume_at = Some(position);
-                    self.resume_paused = paused;
+                    self.resume_paused = !play;
                     self.load_current(cx);
                     // The same listen, already in the history.
                     if recorded {
@@ -494,7 +496,7 @@ impl Playback {
                     }
                 }
                 if lost {
-                    toasts::show("La salida de audio cambió; sigue sonando aquí", cx);
+                    toasts::show("La salida de audio cambió; la música quedó en pausa", cx);
                 }
             }
             Err(err) => {
