@@ -464,15 +464,21 @@ impl Playback {
         }
     }
 
-    /// When the output device goes away (unplugged, or the system switched to another), opens
-    /// the new default one and picks the track up where it was, paused: unplugged headphones
-    /// must not go on playing out loud, and Windows does not tell that apart from switching by
-    /// hand. The old device's player cannot be moved, so the track is loaded again (from the
-    /// disk cache, so at once).
+    /// When the output device goes away, opens the new default one and picks the track up where
+    /// it was. If the old device was unplugged, it waits paused (headphones pulled out must not
+    /// go on playing out loud); if it is still connected, the output was switched on purpose
+    /// (in Windows, or from Atic) and the music goes on there. The old device's player cannot
+    /// be moved, so the track is loaded again (from the disk cache, so at once).
     fn follow_audio_device(&mut self, cx: &mut Context<Self>) {
         let lost = self.player.as_ref().is_some_and(AudioPlayer::device_lost);
+        let mut switched = false;
         if lost {
             let position = self.position();
+            switched = self.is_playing()
+                && self
+                    .player
+                    .as_ref()
+                    .is_some_and(AudioPlayer::device_still_connected);
             // Without a track on the player there is nothing to pick up.
             self.device_pending = self.started.then_some(position);
             self.player = None;
@@ -483,7 +489,7 @@ impl Playback {
         {
             return;
         }
-        self.reopen_audio_device(lost, false, cx);
+        self.reopen_audio_device(lost, switched, cx);
     }
 
     /// Opens the default output device and resumes the track waiting for one, if any: paused,
@@ -504,7 +510,7 @@ impl Playback {
                         self.recorded = Some(self.generation);
                     }
                 }
-                if lost {
+                if lost && !play {
                     toasts::show("La salida de audio cambió; la música quedó en pausa", cx);
                 }
             }

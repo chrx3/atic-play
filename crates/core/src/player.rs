@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use rodio::cpal::DeviceId;
+use rodio::cpal::traits::{DeviceTrait, HostTrait};
 use rodio::source::SeekError;
 use rodio::{
     ChannelCount, CpalError, CpalErrorKind, Decoder, DeviceSinkBuilder, MixerDeviceSink, Player,
@@ -76,12 +78,14 @@ pub struct AudioPlayer {
     /// Set by the audio thread when the output device went away or changed, so nothing is heard
     /// any more; see [`AudioPlayer::device_lost`].
     device_lost: Arc<AtomicBool>,
+    /// The output device the player opened (the default one then), when it could be told.
+    device_id: Option<DeviceId>,
 }
 
 impl AudioPlayer {
     pub fn new() -> Result<Self> {
         let device_lost = Arc::new(AtomicBool::new(false));
-        let mut sink = open_sink(device_lost.clone())?;
+        let (mut sink, device_id) = open_sink(device_lost.clone())?;
         sink.log_on_drop(false);
         let decks = [
             Player::connect_new(sink.mixer()),
@@ -97,7 +101,25 @@ impl AudioPlayer {
             fade_out_ends: None,
             level: Arc::default(),
             device_lost,
+            device_id,
         })
+    }
+
+    /// Whether the device this player opened is still connected. After [`device_lost`], it
+    /// tells a device switched by hand (still there) from one unplugged (gone). Asks the system,
+    /// so call it only then.
+    ///
+    /// [`device_lost`]: AudioPlayer::device_lost
+    pub fn device_still_connected(&self) -> bool {
+        let Some(opened) = &self.device_id else {
+            return false;
+        };
+        let Ok(devices) = rodio::cpal::default_host().output_devices() else {
+            return false;
+        };
+        devices
+            .filter_map(|device| device.id().ok())
+            .any(|id| id == *opened)
     }
 
     /// The output device was unplugged, or the system switched to another one: this player is
@@ -254,9 +276,9 @@ impl AudioPlayer {
     }
 }
 
-/// Opens the default output device, noting in `device_lost` when it stops working. Falls back
-/// to any device that opens, without that notice.
-fn open_sink(device_lost: Arc<AtomicBool>) -> Result<MixerDeviceSink> {
+/// Opens the default output device, noting in `device_lost` when it stops working, and returns
+/// which device it is. Falls back to any device that opens, without that notice.
+fn open_sink(device_lost: Arc<AtomicBool>) -> Result<(MixerDeviceSink, Option<DeviceId>)> {
     let on_error = move |err: CpalError| match err.kind() {
         // On Windows a change of default device also ends the stream (WASAPI does not move it).
         CpalErrorKind::DeviceNotAvailable | CpalErrorKind::StreamInvalidated => {
@@ -265,13 +287,18 @@ fn open_sink(device_lost: Arc<AtomicBool>) -> Result<MixerDeviceSink> {
         }
         _ => log::warn!("audio output: {err}"),
     };
-    let watched = DeviceSinkBuilder::from_default_device()
+    // The default device follows the system's choice; its id now is the endpoint it is on.
+    let default = rodio::cpal::default_host().default_output_device();
+    let device_id = default.as_ref().and_then(|device| device.id().ok());
+    let watched = default
+        .ok_or(rodio::DeviceSinkError::NoDevice)
+        .and_then(DeviceSinkBuilder::from_device)
         .and_then(|builder| builder.with_error_callback(on_error).open_stream());
     match watched {
-        Ok(sink) => Ok(sink),
+        Ok(sink) => Ok((sink, device_id)),
         Err(err) => {
             log::warn!("default audio output: {err}; trying the others");
-            Ok(DeviceSinkBuilder::open_default_sink()?)
+            Ok((DeviceSinkBuilder::open_default_sink()?, None))
         }
     }
 }

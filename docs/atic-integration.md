@@ -38,7 +38,7 @@ Atic lee esa misma sesión con `GlobalSystemMediaTransportControlsSessionManager
 
 ## 2. Problemas a corregir antes de nada
 
-### 2.1 Cambiar la salida desde Atic pausa la música ⚠️
+### 2.1 Cambiar la salida desde Atic pausa la música ✅ (resuelto en Atic-play)
 
 - Atic cambia la salida de audio por omisión del sistema
   (`IPolicyConfig::SetDefaultEndpoint`, `src/system/os.rs`).
@@ -48,8 +48,9 @@ Atic lee esa misma sesión con `GlobalSystemMediaTransportControlsSessionManager
 - Resultado: elegir otra salida en el panel de Atic pausa Atic-play. Hay que
   darle play de nuevo.
 
-**Arreglo (en Atic-play, no depende de Atic):** distinguir entre "se desconectó"
-y "se eligió otra salida".
+**Arreglo (hecho en Atic-play, no depende de Atic):** distinguir entre "se
+desconectó" y "se eligió otra salida". `AudioPlayer` guarda el id del dispositivo
+que abrió y `device_still_connected()` lo busca entre las salidas activas.
 
 - Al perder el stream, mirar si el dispositivo anterior **sigue en la lista de
   salidas activas** (`cpal::default_host().output_devices()`, comparando el
