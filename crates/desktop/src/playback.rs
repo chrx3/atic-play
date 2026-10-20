@@ -1,6 +1,6 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{Context, Hsla, SharedString, Subscription, Task, rgb};
 use material_colors::image::{Image, ImageReader};
@@ -30,6 +30,10 @@ const GAPLESS_LEAD: Duration = Duration::from_secs(2);
 const MAX_SKIPS_IN_A_ROW: u32 = 3;
 /// How long to wait before asking for the radio again after it failed.
 const RADIO_RETRY_AFTER: Duration = Duration::from_secs(15);
+/// Settings are written at most this often; dragging the volume changes them many times.
+const SETTINGS_SAVE_INTERVAL: Duration = Duration::from_secs(3);
+/// While playing, the position is saved this often, so a crash resumes close to where it was.
+const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(30);
 /// While no output device can be opened, how often (in ticks) to try again.
 const DEVICE_RETRY_TICKS: u32 = 8;
 /// A track counts as played, for the history, after this long (or half of a shorter track).
@@ -85,8 +89,9 @@ pub struct Playback {
     /// The track and state the media session last heard, to only send changes.
     media_sent: Option<(String, bool)>,
     ticks: u32,
-    /// Settings changed since they were last written; written on the next tick.
+    /// Settings changed since they were last written; written on a tick soon.
     settings_dirty: bool,
+    last_saved: Instant,
     _ticker: Task<()>,
     _quit: Subscription,
 }
@@ -151,6 +156,7 @@ impl Playback {
             media_sent: None,
             ticks: 0,
             settings_dirty: false,
+            last_saved: Instant::now(),
             _ticker: ticker,
             _quit: quit,
         };
@@ -450,7 +456,10 @@ impl Playback {
             cx.notify();
         }
 
-        if self.settings_dirty {
+        let since_saved = self.last_saved.elapsed();
+        if (self.settings_dirty && since_saved >= SETTINGS_SAVE_INTERVAL)
+            || (self.is_playing() && since_saved >= POSITION_SAVE_INTERVAL)
+        {
             self.save_settings(cx);
         }
     }
@@ -984,6 +993,7 @@ impl Playback {
 
     fn save_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_dirty = false;
+        self.last_saved = Instant::now();
         let position = self.position().as_secs_f32();
         let queue = self.queue.tracks().to_vec();
         let queue_index = self.queue.current_index();

@@ -15,6 +15,37 @@ const LEVELS_PER_SECOND: u32 = 30;
 
 type BoxedSource = Box<dyn Source + Send>;
 
+/// A track's file held in memory once and shared, not copied, between the disk cache, the
+/// loudness meter, the prepared next track and the player.
+#[derive(Clone)]
+pub struct AudioBytes(Arc<Vec<u8>>);
+
+impl From<Vec<u8>> for AudioBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        AudioBytes(Arc::new(bytes))
+    }
+}
+
+impl std::fmt::Debug for AudioBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AudioBytes({} bytes)", self.0.len())
+    }
+}
+
+impl AsRef<[u8]> for AudioBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for AudioBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 /// A track decoded and wrapped, ready to start without delay.
 struct Prepared {
     source: BoxedSource,
@@ -77,7 +108,7 @@ impl AudioPlayer {
 
     /// Replaces whatever is playing with an M4A/AAC track held in memory. `gain` normalizes its
     /// volume (1 leaves it as it is).
-    pub fn play(&mut self, audio: Vec<u8>, gain: f32) -> Result<()> {
+    pub fn play(&mut self, audio: AudioBytes, gain: f32) -> Result<()> {
         let prepared = self.prepare(audio, gain)?;
         self.stop();
         let deck = &self.decks[self.active];
@@ -89,7 +120,7 @@ impl AudioPlayer {
 
     /// Decodes the track that plays next, so the transition to it starts instantly. Replaces an
     /// earlier one that has not started.
-    pub fn prepare_next(&mut self, audio: Vec<u8>, gain: f32) -> Result<()> {
+    pub fn prepare_next(&mut self, audio: AudioBytes, gain: f32) -> Result<()> {
         self.next = Some(self.prepare(audio, gain)?);
         Ok(())
     }
@@ -203,7 +234,7 @@ impl AudioPlayer {
         }
     }
 
-    fn prepare(&self, audio: Vec<u8>, gain: f32) -> Result<Prepared> {
+    fn prepare(&self, audio: AudioBytes, gain: f32) -> Result<Prepared> {
         let byte_len = audio.len() as u64;
         let decoder = Decoder::builder()
             .with_data(Cursor::new(audio))

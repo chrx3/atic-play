@@ -12,5 +12,5 @@ pub use client::{
     GenreSection, HomeFeed, Library, More, Page, Playlist, PlaylistPage, SearchSuggestions, Track,
 };
 pub use lyrics::{LyricLine, Lyrics, LyricsClient};
-pub use player::AudioPlayer;
+pub use player::{AudioBytes, AudioPlayer};
 pub use queue::{Queue, RepeatMode};

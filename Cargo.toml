@@ -18,3 +18,8 @@ opt-level = 1
 # the user's own playlists (see vendor/rustypipe/src/client/response/music_playlist.rs).
 [patch.crates-io]
 rustypipe = { path = "vendor/rustypipe" }
+
+# The build for everyday use (`cargo build --release`): faster and smaller than the debug one.
+[profile.release]
+lto = "thin"
+codegen-units = 1

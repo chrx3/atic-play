@@ -7,6 +7,8 @@ use std::io::Cursor;
 
 use rodio::Decoder;
 
+use crate::player::AudioBytes;
+
 /// The RMS level tracks are brought to; about -15 dBFS, a little under typical modern masters, so
 /// quiet tracks are lifted and loud ones turned down.
 const TARGET_RMS: f32 = 0.18;
@@ -18,10 +20,11 @@ const SILENCE_RMS: f32 = 1e-4;
 
 /// The gain that brings an M4A/AAC track to the target level, or `None` if it cannot be decoded
 /// or is silent. Decodes the whole track: run it off the UI and audio threads.
-pub(crate) fn normalization_gain(audio: &[u8]) -> Option<f32> {
+pub(crate) fn normalization_gain(audio: AudioBytes) -> Option<f32> {
+    let byte_len = audio.len() as u64;
     let decoder = Decoder::builder()
-        .with_data(Cursor::new(audio.to_vec()))
-        .with_byte_len(audio.len() as u64)
+        .with_data(Cursor::new(audio))
+        .with_byte_len(byte_len)
         .with_seekable(true)
         .with_mime_type("audio/mp4")
         .build()
@@ -69,6 +72,6 @@ mod tests {
 
     #[test]
     fn undecodable_audio_has_no_gain() {
-        assert_eq!(normalization_gain(b"not audio"), None);
+        assert_eq!(normalization_gain(b"not audio".to_vec().into()), None);
     }
 }

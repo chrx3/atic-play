@@ -22,6 +22,7 @@ use tokio::sync::{OnceCell, Semaphore};
 
 use crate::audio_cache::AudioCache;
 use crate::loudness::normalization_gain;
+use crate::player::AudioBytes;
 
 /// YouTube serves full-length downloads slowly; ranged requests of this size are not throttled.
 const CHUNK_SIZE: u64 = 10 * 1024 * 1024;
@@ -29,6 +30,8 @@ const CHUNK_SIZE: u64 = 10 * 1024 * 1024;
 /// M4A/AAC formats only, because that is what rodio decodes: 141 (256 kbps, Premium), then 140.
 /// How long yt-dlp may take to resolve a track before it is killed.
 const YT_DLP_TIMEOUT: Duration = Duration::from_secs(60);
+/// Covers not downloaded again for this long are deleted at startup.
+const COVER_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 /// Stream URLs last about six hours; one resolved ahead is used for well under that.
 const RESOLUTION_LIFETIME: Duration = Duration::from_secs(60 * 60);
 /// yt-dlp runs at once for tracks resolved ahead (each takes a second or more of CPU).
@@ -140,7 +143,7 @@ impl From<MusicPlaylistItem> for Playlist {
 #[derive(Debug, Clone)]
 pub struct Audio {
     /// The M4A/AAC file.
-    pub bytes: Vec<u8>,
+    pub bytes: AudioBytes,
     /// The volume factor that normalizes it, if it could be measured.
     pub gain: Option<f32>,
 }
@@ -426,6 +429,7 @@ impl Client {
             .worker_threads(2)
             .enable_all()
             .build()?;
+        runtime.spawn_blocking(|| prune_covers(&covers_dir(), COVER_MAX_AGE));
         // Genres, chart titles and other text YouTube writes come in Latin American Spanish, like
         // the app. The country is left to YouTube, which goes by the IP.
         let pipe = RustyPipe::builder()
@@ -989,12 +993,14 @@ impl Client {
             };
             let (bytes, gain, fresh) = match cached {
                 Some((bytes, Some(gain))) => {
+                    let bytes = AudioBytes::from(bytes);
                     log::info!("track {track_id}: from disk");
                     (bytes, Some(gain), false)
                 }
                 // Cached before normalization existed: measure it once now.
                 Some((bytes, None)) => {
-                    let gain = measure_gain(&bytes).await?;
+                    let bytes = AudioBytes::from(bytes);
+                    let gain = measure_gain(bytes.clone()).await?;
                     (bytes, gain, false)
                 }
                 None => {
@@ -1103,7 +1109,7 @@ impl Client {
     ) -> impl Future<Output = Result<PathBuf>> + use<> {
         let http = self.http.clone();
         self.spawn(async move {
-            let dir = std::env::temp_dir().join("ytm-player").join("covers");
+            let dir = covers_dir();
             let path = dir.join(format!("{key}-{size_px}.jpg"));
             if tokio::fs::try_exists(&path).await? {
                 return Ok(path);
@@ -1236,7 +1242,7 @@ async fn fetch_fresh(
     resolver: &Resolver,
     cookies: Option<&Path>,
     track_id: &str,
-) -> Result<(Vec<u8>, Option<f32>)> {
+) -> Result<(AudioBytes, Option<f32>)> {
     let started = Instant::now();
     let stream = resolver.resolve(cookies, track_id).await?;
     log::info!(
@@ -1259,7 +1265,8 @@ async fn fetch_fresh(
             return Err(err);
         }
     };
-    let gain = measure_gain(&bytes).await?;
+    let bytes = AudioBytes::from(bytes);
+    let gain = measure_gain(bytes.clone()).await?;
     // Each URL is downloaded once; replays come from the disk cache.
     resolver.forget(cookies, track_id);
     Ok((bytes, gain))
@@ -1272,9 +1279,8 @@ fn is_forbidden(err: &anyhow::Error) -> bool {
 }
 
 /// Decodes the whole track to measure it, off the async workers.
-async fn measure_gain(bytes: &[u8]) -> Result<Option<f32>> {
-    let audio = bytes.to_vec();
-    Ok(tokio::task::spawn_blocking(move || normalization_gain(&audio)).await?)
+async fn measure_gain(bytes: AudioBytes) -> Result<Option<f32>> {
+    Ok(tokio::task::spawn_blocking(move || normalization_gain(bytes)).await?)
 }
 
 /// Whether a `cookies.txt` holds a signed-in YouTube session (the cookie YouTube signs API
@@ -1405,6 +1411,33 @@ async fn download_chunk(
             }
             Err(err) => return Err(err.into()),
         }
+    }
+}
+
+/// Where covers are cached. They are cheap to download again, so the system may clear them.
+fn covers_dir() -> PathBuf {
+    std::env::temp_dir().join("ytm-player").join("covers")
+}
+
+/// Deletes covers older than `max_age`, so the cache does not grow forever.
+fn prune_covers(dir: &Path, max_age: Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let old = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > max_age);
+        if old && std::fs::remove_file(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        log::info!("removed {removed} old covers");
     }
 }
 
