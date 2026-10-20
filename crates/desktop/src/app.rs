@@ -89,6 +89,7 @@ pub struct YtmApp {
     /// The id of the playlist page on screen, to highlight it in the sidebar.
     open_playlist: Option<String>,
     account: Entity<Account>,
+    covers: Entity<Covers>,
     playback: Entity<Playback>,
     navigation: Entity<Navigation>,
     search_box: Entity<SearchBox>,
@@ -283,6 +284,8 @@ impl YtmApp {
             // The song menu opens and closes.
             cx.observe(&navigation, |_, _, cx| cx.notify()),
             cx.observe(&Toasts::global(cx), |_, _, cx| cx.notify()),
+            // The playlist covers in the sidebar.
+            cx.observe(&covers, |_, _, cx| cx.notify()),
             // The sidebar shows the session and the playlists; the dialog closes once signed in.
             cx.observe(&account, |this, account, cx| {
                 if account.read(cx).is_signed_in() {
@@ -317,6 +320,7 @@ impl YtmApp {
             focus_handle: cx.focus_handle(),
             open_playlist: None,
             account,
+            covers,
             playback,
             navigation,
             search_box,
@@ -387,7 +391,8 @@ impl YtmApp {
 
     fn open_playlist_dialog(&mut self, mode: PlaylistDialogMode, cx: &mut Context<Self>) {
         let account = self.account.clone();
-        let dialog = cx.new(|cx| PlaylistDialog::new(account, mode, cx));
+        let covers = self.covers.clone();
+        let dialog = cx.new(|cx| PlaylistDialog::new(account, covers, mode, cx));
         let subscription =
             cx.subscribe(
                 &dialog,
@@ -605,7 +610,8 @@ impl Render for YtmApp {
                     })
                     .ok();
             },
-        );
+        )
+        .covers(self.covers.clone());
         let sign_in = self.sign_in_open.then(|| {
             SignInDialog::new(self.account.clone(), move |_, cx| {
                 view.update(cx, |this, cx| {

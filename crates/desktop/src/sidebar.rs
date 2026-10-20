@@ -1,13 +1,18 @@
 use std::rc::Rc;
 
-use gpui::{App, ClickEvent, Entity, Window, div, img, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, Entity, FontWeight, Window, div, img, prelude::*, px};
 use gpui_m3::{Button, IconButton, NavItem, Theme};
 
 use ytm_core::Playlist;
 
 use crate::account::{Account, AccountState};
 use crate::assets;
-use crate::ui::skeleton;
+use crate::covers::Covers;
+use crate::ui::{CARD_COVER_SIZE, skeleton, thumbnail};
+
+/// Height of a playlist row, and the size of its cover.
+const PLAYLIST_ROW_HEIGHT: f32 = 44.;
+const PLAYLIST_COVER: f32 = 32.;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
@@ -33,6 +38,8 @@ pub struct Sidebar {
     /// The playlist on screen, highlighted in the list.
     open_playlist: Option<String>,
     account: Entity<Account>,
+    /// Where the playlist covers come from; without it the playlists show placeholders.
+    covers: Option<Entity<Covers>>,
     on_navigate: NavigateHandler,
     on_open_playlist: OpenPlaylistHandler,
     on_sign_in: ActionHandler,
@@ -53,11 +60,17 @@ impl Sidebar {
             route,
             open_playlist,
             account,
+            covers: None,
             on_navigate: Rc::new(on_navigate),
             on_open_playlist: Rc::new(on_open_playlist),
             on_sign_in: Rc::new(on_sign_in),
             on_new_playlist: Rc::new(on_new_playlist),
         }
+    }
+
+    pub fn covers(mut self, covers: Entity<Covers>) -> Self {
+        self.covers = Some(covers);
+        self
     }
 
     fn item(&self, route: Route, label: &'static str, icon: &'static str) -> NavItem {
@@ -86,21 +99,14 @@ impl Sidebar {
                 hint("Aún no tienes playlists guardadas")
             }
             (AccountState::SignedIn, Some(library)) => {
-                let items: Vec<_> = library
-                    .playlists
-                    .iter()
+                let playlists = library.playlists.clone();
+                let items: Vec<_> = playlists
+                    .into_iter()
                     .enumerate()
                     .map(|(index, playlist)| {
-                        let on_open_playlist = self.on_open_playlist.clone();
                         let selected = self.route == Route::Playlist
                             && self.open_playlist.as_deref() == Some(playlist.id.as_str());
-                        let playlist = playlist.clone();
-                        NavItem::new(("playlist", index), playlist.title.clone())
-                            .dense(true)
-                            .selected(selected)
-                            .on_click(move |_: &ClickEvent, window, cx| {
-                                on_open_playlist(playlist.clone(), window, cx)
-                            })
+                        self.render_playlist(index, playlist, selected, cx)
                     })
                     .collect();
                 div().flex().flex_col().children(items).into_any_element()
@@ -126,6 +132,57 @@ impl Sidebar {
             .min_h_0()
             .overflow_y_scroll()
             .child(content)
+    }
+
+    /// A playlist with its cover, styled like the navigation items above it.
+    fn render_playlist(
+        &self,
+        index: usize,
+        playlist: Playlist,
+        selected: bool,
+        cx: &mut App,
+    ) -> AnyElement {
+        let s = *Theme::of(cx);
+        // The size the library downloads, so both share one file.
+        let cover = self.covers.as_ref().and_then(|covers| {
+            covers.update(cx, |covers, cx| {
+                covers.get(
+                    &playlist.id,
+                    playlist.cover_url.as_deref(),
+                    CARD_COVER_SIZE,
+                    cx,
+                )
+            })
+        });
+        let on_open_playlist = self.on_open_playlist.clone();
+        let title = playlist.title.clone();
+        div()
+            .id(("playlist", index))
+            .flex()
+            .items_center()
+            .gap_3()
+            .h(px(PLAYLIST_ROW_HEIGHT))
+            .px(px((PLAYLIST_ROW_HEIGHT - PLAYLIST_COVER) / 2.))
+            .rounded(px(PLAYLIST_ROW_HEIGHT / 2.))
+            .cursor_pointer()
+            .text_size(px(13.))
+            .map(|row| {
+                if selected {
+                    row.bg(s.secondary_container)
+                        .text_color(s.on_secondary_container)
+                        .font_weight(FontWeight(700.))
+                } else {
+                    row.text_color(s.on_surface)
+                        .font_weight(FontWeight(500.))
+                        .hover(|row| row.bg(s.surface_container_highest))
+                }
+            })
+            .child(thumbnail(cover, PLAYLIST_COVER, 8., cx))
+            .child(div().flex_1().min_w_0().truncate().child(title))
+            .on_click(move |_: &ClickEvent, window, cx| {
+                on_open_playlist(playlist.clone(), window, cx)
+            })
+            .into_any_element()
     }
 
     fn render_account(&self, cx: &mut App) -> impl IntoElement {

@@ -7,6 +7,8 @@ use gpui_m3::{Button, Dialog, ListItem, TextField, TextFieldEvent, Theme};
 use ytm_core::{Playlist, Track};
 
 use crate::account::Account;
+use crate::covers::Covers;
+use crate::ui::{CARD_COVER_SIZE, thumbnail};
 
 /// What the dialog is for.
 #[derive(Clone)]
@@ -29,6 +31,7 @@ pub enum PlaylistDialogEvent {
 
 pub struct PlaylistDialog {
     account: Entity<Account>,
+    covers: Entity<Covers>,
     mode: PlaylistDialogMode,
     /// The name, when creating or renaming.
     name: Entity<TextField>,
@@ -40,7 +43,12 @@ pub struct PlaylistDialog {
 impl EventEmitter<PlaylistDialogEvent> for PlaylistDialog {}
 
 impl PlaylistDialog {
-    pub fn new(account: Entity<Account>, mode: PlaylistDialogMode, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        account: Entity<Account>,
+        covers: Entity<Covers>,
+        mode: PlaylistDialogMode,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let name = cx.new(|cx| TextField::new(cx).placeholder("Nombre de la playlist"));
         if let PlaylistDialogMode::Rename(playlist) = &mode {
             let title = playlist.title.clone();
@@ -59,12 +67,14 @@ impl PlaylistDialog {
             account.update(cx, |account, cx| account.reload_editable_playlists(cx));
         }
         cx.observe(&account, |_, _, cx| cx.notify()).detach();
+        cx.observe(&covers, |_, _, cx| cx.notify()).detach();
         let focus_name = matches!(
             mode,
             PlaylistDialogMode::Create(_) | PlaylistDialogMode::Rename(_)
         );
         PlaylistDialog {
             account,
+            covers,
             mode,
             name,
             focus_name,
@@ -119,6 +129,17 @@ impl PlaylistDialog {
         let account = self.account.read(cx);
         let playlists = account.editable_playlists().to_vec();
         let loading = account.is_loading_editable_playlists();
+        // The library's covers are the playlist mosaics; the dialog only sends a video still.
+        let library_covers: Vec<(String, Option<String>)> = account
+            .library()
+            .map(|library| {
+                library
+                    .playlists
+                    .iter()
+                    .map(|playlist| (playlist.id.clone(), playlist.cover_url.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
         let rows: Vec<_> = playlists
             .into_iter()
             .enumerate()
@@ -128,8 +149,17 @@ impl PlaylistDialog {
                     .track_count
                     .map(|count| format!("{count} canciones"))
                     .unwrap_or_default();
+                let cover_url = library_covers
+                    .iter()
+                    .find(|(id, _)| *id == playlist.id)
+                    .and_then(|(_, url)| url.clone())
+                    .or_else(|| playlist.cover_url.clone());
+                let cover = self.covers.update(cx, |covers, cx| {
+                    covers.get(&playlist.id, cover_url.as_deref(), CARD_COVER_SIZE, cx)
+                });
                 ListItem::new(("save-to", index), playlist.title.clone())
                     .subtitle(subtitle)
+                    .leading(thumbnail(cover, 40., 8., cx))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         let (playlist, tracks) = (playlist.clone(), tracks.clone());
                         this.account.update(cx, |account, cx| {
