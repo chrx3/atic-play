@@ -15,6 +15,7 @@ mod home_view;
 mod library_view;
 mod lyrics_panel;
 mod media_session;
+mod mini_player;
 mod navigation;
 mod now_playing_view;
 mod playback;
@@ -142,8 +143,13 @@ fn main() -> ExitCode {
                 },
             )
             .expect("could not open the main window");
+            // Closing the main window quits, even with the mini player open.
             cx.on_window_closed(|cx| {
-                if cx.windows().is_empty() {
+                let main_open = cx
+                    .windows()
+                    .iter()
+                    .any(|window| window.downcast::<YtmApp>().is_some());
+                if !main_open {
                     cx.quit();
                 }
             })

@@ -23,6 +23,7 @@ actions!(
         GoBack,
         Close,
         FocusSearch,
+        ToggleMiniPlayer,
     ]
 );
 
@@ -45,5 +46,6 @@ pub fn bind(cx: &mut App) {
         // Going back works from anywhere, as in a browser.
         KeyBinding::new("alt-left", GoBack, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-f", FocusSearch, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-m", ToggleMiniPlayer, Some(KEY_CONTEXT)),
     ]);
 }
