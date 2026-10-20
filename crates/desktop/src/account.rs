@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use gpui::{Context, SharedString};
-use ytm_core::{Client, Library, Track};
+use gpui::{Context, EventEmitter, SharedString};
+use ytm_core::{Client, Library, Playlist, Track};
 
 use crate::google_sign_in;
+use crate::toasts;
 
 /// Runs this executable in sign-in mode and waits for the window to close. Returns the session
 /// cookies, or `None` if the user closed the window first.
@@ -45,6 +46,12 @@ fn remove_sign_in_files(cookies_path: &Path, profile_dir: &Path) -> bool {
     !cookies_path.exists() && !profile_dir.exists()
 }
 
+/// A change to the user's playlists, for the views showing them.
+pub enum AccountEvent {
+    PlaylistChanged(String),
+    PlaylistDeleted(String),
+}
+
 pub enum AccountState {
     /// Checking the session saved last time.
     Restoring,
@@ -60,9 +67,14 @@ pub struct Account {
     state: AccountState,
     library: Option<Library>,
     library_loading: bool,
+    /// The user's own playlists, which songs can be saved to.
+    editable_playlists: Vec<Playlist>,
+    editable_loading: bool,
     /// The last sign-in or library error, shown where it happened.
     error: Option<SharedString>,
 }
+
+impl EventEmitter<AccountEvent> for Account {}
 
 impl Account {
     pub fn new(client: Client, data_dir: PathBuf, cx: &mut Context<Self>) -> Self {
@@ -93,6 +105,8 @@ impl Account {
             state: AccountState::Restoring,
             library: None,
             library_loading: false,
+            editable_playlists: Vec::new(),
+            editable_loading: false,
             error: None,
         }
     }
@@ -164,6 +178,159 @@ impl Account {
         .detach();
     }
 
+    pub fn editable_playlists(&self) -> &[Playlist] {
+        &self.editable_playlists
+    }
+
+    pub fn is_loading_editable_playlists(&self) -> bool {
+        self.editable_loading
+    }
+
+    /// Whether the playlist is the user's own, so it can be renamed, deleted and edited.
+    pub fn is_editable(&self, playlist_id: &str) -> bool {
+        self.editable_playlists
+            .iter()
+            .any(|playlist| playlist.id == playlist_id)
+    }
+
+    pub fn reload_editable_playlists(&mut self, cx: &mut Context<Self>) {
+        if !self.is_signed_in() || self.editable_loading {
+            return;
+        }
+        self.editable_loading = true;
+        cx.notify();
+        let request = self.client.editable_playlists();
+        cx.spawn(async move |this, cx| {
+            let playlists = request.await;
+            this.update(cx, |this, cx| {
+                this.editable_loading = false;
+                match playlists {
+                    Ok(playlists) => this.editable_playlists = playlists,
+                    Err(err) => log::warn!("editable playlists: {err:#}"),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn add_to_playlist(
+        &mut self,
+        playlist: Playlist,
+        tracks: Vec<Track>,
+        cx: &mut Context<Self>,
+    ) {
+        let message = match tracks.as_slice() {
+            [track] => format!("«{}» guardada en «{}»", track.title, playlist.title),
+            tracks => format!(
+                "{} canciones guardadas en «{}»",
+                tracks.len(),
+                playlist.title
+            ),
+        };
+        let ids = tracks.into_iter().map(|track| track.id).collect();
+        let request = self.client.add_to_playlist(playlist.id.clone(), ids);
+        let event = AccountEvent::PlaylistChanged(playlist.id);
+        self.change_playlists(
+            request,
+            message,
+            "No se pudo guardar en la playlist",
+            event,
+            cx,
+        );
+    }
+
+    pub fn remove_from_playlist(
+        &mut self,
+        playlist: Playlist,
+        track: Track,
+        cx: &mut Context<Self>,
+    ) {
+        let message = format!("«{}» quitada de «{}»", track.title, playlist.title);
+        let request = self
+            .client
+            .remove_from_playlist(playlist.id.clone(), track.id);
+        let event = AccountEvent::PlaylistChanged(playlist.id);
+        self.change_playlists(request, message, "No se pudo quitar la canción", event, cx);
+    }
+
+    pub fn create_playlist(&mut self, title: String, tracks: Vec<Track>, cx: &mut Context<Self>) {
+        let message = format!("Playlist «{title}» creada");
+        let ids = tracks.into_iter().map(|track| track.id).collect();
+        let request = self.client.create_playlist(title, ids);
+        let request = async move { request.await.map(AccountEvent::PlaylistChanged) };
+        self.change_playlists_with(request, message, "No se pudo crear la playlist", cx);
+    }
+
+    pub fn rename_playlist(&mut self, playlist: Playlist, title: String, cx: &mut Context<Self>) {
+        let message = format!("Playlist renombrada a «{title}»");
+        let request = self.client.rename_playlist(playlist.id.clone(), title);
+        let event = AccountEvent::PlaylistChanged(playlist.id);
+        self.change_playlists(
+            request,
+            message,
+            "No se pudo renombrar la playlist",
+            event,
+            cx,
+        );
+    }
+
+    pub fn delete_playlist(&mut self, playlist: Playlist, cx: &mut Context<Self>) {
+        let message = format!("Playlist «{}» eliminada", playlist.title);
+        let request = self.client.delete_playlist(playlist.id.clone());
+        let event = AccountEvent::PlaylistDeleted(playlist.id);
+        self.change_playlists(
+            request,
+            message,
+            "No se pudo eliminar la playlist",
+            event,
+            cx,
+        );
+    }
+
+    fn change_playlists(
+        &mut self,
+        request: impl Future<Output = anyhow::Result<()>> + 'static,
+        done: String,
+        failed: &'static str,
+        event: AccountEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let request = async move { request.await.map(|()| event) };
+        self.change_playlists_with(request, done, failed, cx);
+    }
+
+    /// Runs a change to the user's playlists, says how it went and refreshes what shows them.
+    fn change_playlists_with(
+        &mut self,
+        request: impl Future<Output = anyhow::Result<AccountEvent>> + 'static,
+        done: String,
+        failed: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_signed_in() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let result = request.await;
+            this.update(cx, |this, cx| match result {
+                Ok(event) => {
+                    toasts::show(done, cx);
+                    cx.emit(event);
+                    this.reload_library(cx);
+                    this.reload_editable_playlists(cx);
+                }
+                Err(err) => {
+                    log::warn!("{failed}: {err:#}");
+                    toasts::show(format!("{failed}. Inténtalo de nuevo."), cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Opens the Google sign-in window and signs in with the session it returns.
     pub fn sign_in_with_google(&mut self, cx: &mut Context<Self>) {
         let cookies_path = self.data_dir.join("sign-in-session.txt");
@@ -220,6 +387,7 @@ impl Account {
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
         self.state = AccountState::SignedOut;
         self.library = None;
+        self.editable_playlists.clear();
         self.error = None;
         cx.notify();
         let sign_out = self.client.sign_out();
@@ -261,5 +429,6 @@ impl Account {
         self.state = AccountState::SignedIn;
         self.error = None;
         self.reload_library(cx);
+        self.reload_editable_playlists(cx);
     }
 }

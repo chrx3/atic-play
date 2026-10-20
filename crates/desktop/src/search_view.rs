@@ -5,8 +5,10 @@ use gpui::{
     AnyElement, App, ClickEvent, Context, Div, Entity, SharedString, Stateful, Subscription,
     Window, div, prelude::*, px,
 };
-use gpui_m3::{IconButton, ListItem, Segment, SegmentedButtons, Theme, motion};
-use ytm_core::{Album, Artist, Client, Track};
+use gpui_m3::{
+    Button, IconButton, ListItem, LoadingIndicator, Segment, SegmentedButtons, Theme, motion,
+};
+use ytm_core::{Album, Artist, Client, More, Page, Track};
 
 use crate::assets;
 use crate::covers::Covers;
@@ -14,6 +16,7 @@ use crate::download_ui::downloaded_mark;
 use crate::downloads::Downloads;
 use crate::navigation::{Navigation, with_track_menu};
 use crate::playback::Playback;
+use crate::toasts;
 use crate::ui::{
     CARD_COVER_SIZE, CARD_WIDTH, MEDIA_CARD_GROUP, avatar, compact_count, format_time,
     friendly_error, media_card, placeholder, section_title, skeleton_cards, skeleton_rows,
@@ -33,8 +36,25 @@ const TABS: [Tab; 3] = [Tab::Songs, Tab::Albums, Tab::Artists];
 
 enum Load<T> {
     Loading,
-    Ready(Vec<T>),
+    Ready(Results<T>),
     Failed(SharedString),
+}
+
+/// The results loaded so far, and the rest.
+struct Results<T> {
+    items: Vec<T>,
+    more: Option<More<T>>,
+    loading_more: bool,
+}
+
+impl<T> Results<T> {
+    fn empty() -> Self {
+        Results {
+            items: Vec::new(),
+            more: None,
+            loading_more: false,
+        }
+    }
 }
 
 /// Search results, split by kind as in YouTube Music.
@@ -75,9 +95,9 @@ impl SearchView {
             query: SharedString::default(),
             generation: 0,
             tab: Tab::Songs,
-            songs: Load::Ready(Vec::new()),
-            albums: Load::Ready(Vec::new()),
-            artists: Load::Ready(Vec::new()),
+            songs: Load::Ready(Results::empty()),
+            albums: Load::Ready(Results::empty()),
+            artists: Load::Ready(Results::empty()),
             _subscriptions: subscriptions,
         }
     }
@@ -113,7 +133,7 @@ impl SearchView {
 
     fn load<T: 'static>(
         &mut self,
-        request: impl Future<Output = Result<Vec<T>>> + 'static,
+        request: impl Future<Output = Result<Page<T>>> + 'static,
         slot: fn(&mut Self) -> &mut Load<T>,
         cx: &mut Context<Self>,
     ) {
@@ -125,7 +145,11 @@ impl SearchView {
                     return;
                 }
                 *slot(this) = match result {
-                    Ok(items) => Load::Ready(items),
+                    Ok(page) => Load::Ready(Results {
+                        items: page.items,
+                        more: page.more,
+                        loading_more: false,
+                    }),
                     Err(err) => Load::Failed(friendly_error(&err)),
                 };
                 cx.notify();
@@ -133,6 +157,76 @@ impl SearchView {
             .ok();
         })
         .detach();
+    }
+
+    /// Adds the next page of results to a tab.
+    fn load_more<T: Send + 'static>(
+        &mut self,
+        slot: fn(&mut Self) -> &mut Load<T>,
+        cx: &mut Context<Self>,
+    ) {
+        let Load::Ready(results) = slot(self) else {
+            return;
+        };
+        let Some(more) = results.more.clone().filter(|_| !results.loading_more) else {
+            return;
+        };
+        results.loading_more = true;
+        cx.notify();
+        let request = self.client.more(more);
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            let page = request.await;
+            this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                let Load::Ready(results) = slot(this) else {
+                    return;
+                };
+                results.loading_more = false;
+                match page {
+                    Ok(page) => {
+                        results.items.extend(page.items);
+                        results.more = page.more;
+                    }
+                    Err(err) => toasts::show(friendly_error(&err), cx),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// "Mostrar más" under the results of the open tab, while there are more.
+    fn render_more(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (has_more, loading) = match self.tab {
+            Tab::Songs => more_state(&self.songs),
+            Tab::Albums => more_state(&self.albums),
+            Tab::Artists => more_state(&self.artists),
+        };
+        if !has_more {
+            return None;
+        }
+        let footer = div().flex().justify_center().py_2();
+        Some(if loading {
+            footer
+                .child(LoadingIndicator::new().size(px(32.)))
+                .into_any_element()
+        } else {
+            footer
+                .child(
+                    Button::new("search-more", "Mostrar más")
+                        .tonal()
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| match this.tab {
+                            Tab::Songs => this.load_more(|this| &mut this.songs, cx),
+                            Tab::Albums => this.load_more(|this| &mut this.albums, cx),
+                            Tab::Artists => this.load_more(|this| &mut this.artists, cx),
+                        })),
+                )
+                .into_any_element()
+        })
     }
 
     fn render_songs(&self, songs: &[Track], cx: &mut Context<Self>) -> AnyElement {
@@ -215,27 +309,28 @@ impl Render for SearchView {
 
         let content = match self.tab {
             Tab::Songs => match &self.songs {
-                Load::Ready(items) if !items.is_empty() => {
-                    let items = items.clone();
+                Load::Ready(results) if !results.items.is_empty() => {
+                    let items = results.items.clone();
                     self.render_songs(&items, cx)
                 }
                 other => status(other, Tab::Songs, cx),
             },
             Tab::Albums => match &self.albums {
-                Load::Ready(items) if !items.is_empty() => {
-                    let items = items.clone();
+                Load::Ready(results) if !results.items.is_empty() => {
+                    let items = results.items.clone();
                     self.render_albums(&items, cx)
                 }
                 other => status(other, Tab::Albums, cx),
             },
             Tab::Artists => match &self.artists {
-                Load::Ready(items) if !items.is_empty() => {
-                    let items = items.clone();
+                Load::Ready(results) if !results.items.is_empty() => {
+                    let items = results.items.clone();
                     self.render_artists(&items, cx)
                 }
                 other => status(other, Tab::Artists, cx),
             },
         };
+        let more = self.render_more(cx);
 
         div()
             .id("search-results")
@@ -273,7 +368,18 @@ impl Render for SearchView {
                     ),
             )
             .child(content)
+            .children(more)
             .into_any_element()
+    }
+}
+
+/// Whether a tab has more results, and whether they are on their way.
+fn more_state<T>(load: &Load<T>) -> (bool, bool) {
+    match load {
+        Load::Ready(results) if !results.items.is_empty() => {
+            (results.more.is_some(), results.loading_more)
+        }
+        _ => (false, false),
     }
 }
 

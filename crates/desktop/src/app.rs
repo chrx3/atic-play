@@ -8,7 +8,7 @@ use gpui::{
 use gpui_m3::{IconButton, Segment, SegmentedButtons, Spring, Theme, Toast, animate_theme, motion};
 use ytm_core::{Album, Artist, Client, Playlist};
 
-use crate::account::Account;
+use crate::account::{Account, AccountEvent};
 use crate::album_view::AlbumView;
 use crate::artist_view::ArtistView;
 use crate::covers::Covers;
@@ -21,6 +21,7 @@ use crate::navigation::{Navigation, NavigationEvent, render_track_menu};
 use crate::now_playing_view::{NowPlayingEvent, NowPlayingView};
 use crate::playback::Playback;
 use crate::player_bar::{PlayerBar, PlayerBarEvent};
+use crate::playlist_dialog::{PlaylistDialog, PlaylistDialogEvent, PlaylistDialogMode};
 use crate::playlist_view::PlaylistView;
 use crate::queue_panel::QueuePanel;
 use crate::search_box::{SearchBox, SearchBoxEvent};
@@ -109,6 +110,7 @@ pub struct YtmApp {
     /// Bumped on every page change, so each new page plays its entrance.
     page_generation: usize,
     sign_in_open: bool,
+    playlist_dialog: Option<(Entity<PlaylistDialog>, Subscription)>,
     dark: bool,
     applied_seed: Option<Hsla>,
     _subscriptions: Vec<Subscription>,
@@ -154,6 +156,7 @@ impl YtmApp {
                 playback.clone(),
                 covers.clone(),
                 navigation.clone(),
+                account.clone(),
                 cx,
             )
         });
@@ -253,8 +256,16 @@ impl YtmApp {
                         },
                         cx,
                     ),
+                    NavigationEvent::EditPlaylists(mode) => {
+                        this.open_playlist_dialog(mode.clone(), cx)
+                    }
                 },
             ),
+            cx.subscribe(&account, |this, _, event: &AccountEvent, cx| {
+                if let AccountEvent::PlaylistDeleted(id) = event {
+                    this.playlist_deleted(id, cx);
+                }
+            }),
             cx.subscribe(
                 &settings_view,
                 |this, _, event: &SettingsEvent, cx| match event {
@@ -326,6 +337,7 @@ impl YtmApp {
             now_playing_open: false,
             page_generation: 0,
             sign_in_open: false,
+            playlist_dialog: None,
             dark,
             applied_seed: None,
             _subscriptions: subscriptions,
@@ -370,6 +382,34 @@ impl YtmApp {
                 self.artist_view
                     .update(cx, |view, cx| view.open(id, summary, cx));
             }
+        }
+    }
+
+    fn open_playlist_dialog(&mut self, mode: PlaylistDialogMode, cx: &mut Context<Self>) {
+        let account = self.account.clone();
+        let dialog = cx.new(|cx| PlaylistDialog::new(account, mode, cx));
+        let subscription =
+            cx.subscribe(
+                &dialog,
+                |this, _, event: &PlaylistDialogEvent, cx| match event {
+                    PlaylistDialogEvent::Close => {
+                        this.playlist_dialog = None;
+                        cx.notify();
+                    }
+                },
+            );
+        self.playlist_dialog = Some((dialog, subscription));
+        cx.notify();
+    }
+
+    /// A deleted playlist leaves the screen and the way back.
+    fn playlist_deleted(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.back
+            .retain(|page| !matches!(page, Page::Playlist(playlist) if playlist.id == id));
+        if matches!(&self.page, Page::Playlist(playlist) if playlist.id == id) {
+            let page = self.back.pop().unwrap_or(Page::Route(Route::Library));
+            self.page = page.clone();
+            self.show(page, cx);
         }
     }
 
@@ -535,6 +575,7 @@ impl Render for YtmApp {
         let navigate = view.clone();
         let open_playlist = view.clone();
         let open_sign_in = view.clone();
+        let new_playlist = view.clone();
         let sidebar = Sidebar::new(
             self.route,
             self.open_playlist.clone(),
@@ -554,6 +595,13 @@ impl Render for YtmApp {
                     .update(cx, |this, cx| {
                         this.sign_in_open = true;
                         cx.notify();
+                    })
+                    .ok();
+            },
+            move |_, cx| {
+                new_playlist
+                    .update(cx, |this, cx| {
+                        this.open_playlist_dialog(PlaylistDialogMode::Create(Vec::new()), cx)
                     })
                     .ok();
             },
@@ -752,6 +800,11 @@ impl Render for YtmApp {
                 cx,
             ))
             .children(sign_in)
+            .children(
+                self.playlist_dialog
+                    .as_ref()
+                    .map(|(dialog, _)| dialog.clone()),
+            )
             .children(toast)
     }
 }

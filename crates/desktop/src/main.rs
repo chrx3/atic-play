@@ -18,6 +18,7 @@ mod navigation;
 mod now_playing_view;
 mod playback;
 mod player_bar;
+mod playlist_dialog;
 mod playlist_view;
 mod queue_panel;
 mod search_box;

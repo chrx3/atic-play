@@ -2,12 +2,15 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use rustypipe::client::{ClientType, RustyPipe, RustyPipeQuery};
+use rustypipe::model::paginator::Paginator;
+use rustypipe::model::traits::FromYtItem;
 use rustypipe::model::{
     AlbumItem, ArtistId, ArtistItem, MusicItem, MusicPlaylistItem, Thumbnail, TrackItem, VideoItem,
 };
@@ -35,6 +38,8 @@ const AUDIO_FORMAT: &str = "141/140/bestaudio[ext=m4a]";
 
 /// Enough for nearly any playlist; Liked Music can hold thousands, fetched 100 per request.
 const MAX_PLAYLIST_TRACKS: usize = 500;
+/// Saved playlists, albums and artists read for the library.
+const MAX_LIBRARY_ITEMS: usize = 500;
 
 /// A song as the UI shows it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,6 +182,64 @@ pub struct SearchSuggestions {
     pub tracks: Vec<Track>,
     pub albums: Vec<Album>,
     pub artists: Vec<Artist>,
+}
+
+/// One page of a list and, when there is more, how to ask for the next one with
+/// [`Client::more`].
+pub struct Page<T> {
+    pub items: Vec<T>,
+    pub more: Option<More<T>>,
+}
+
+type NextPage<T> =
+    dyn Fn(RustyPipe) -> Pin<Box<dyn Future<Output = Result<Page<T>>> + Send>> + Send + Sync;
+
+/// The rest of a list.
+pub struct More<T> {
+    next: Arc<NextPage<T>>,
+}
+
+impl<T> Clone for More<T> {
+    fn clone(&self) -> Self {
+        More {
+            next: self.next.clone(),
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for More<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("More")
+    }
+}
+
+/// A page from a rustypipe paginator, converting its items.
+fn page_from<I, T>(mut paginator: Paginator<I>) -> Page<T>
+where
+    I: FromYtItem + Clone + Send + Sync + 'static,
+    T: From<I> + Send + 'static,
+{
+    let items = std::mem::take(&mut paginator.items)
+        .into_iter()
+        .map(T::from)
+        .collect();
+    let more = paginator.ctoken.is_some().then(|| More {
+        next: Arc::new(move |pipe: RustyPipe| {
+            let paginator = paginator.clone();
+            let next: Pin<Box<dyn Future<Output = Result<Page<T>>> + Send>> =
+                Box::pin(async move {
+                    Ok(match paginator.next(pipe.query()).await? {
+                        Some(next) => page_from(next),
+                        None => Page {
+                            items: Vec::new(),
+                            more: None,
+                        },
+                    })
+                });
+            next
+        }) as Arc<NextPage<T>>,
+    });
+    Page { items, more }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -411,23 +474,32 @@ impl Client {
         let pipe = self.pipe.clone();
         self.spawn(async move {
             let query = pipe.query();
+            // Each list comes in pages; read them all (up to a limit), so the library is
+            // complete and older liked songs show as liked.
+            let liked = async {
+                let mut liked = query.music_liked_tracks().await?;
+                if let Err(err) = liked.tracks.extend_limit(&query, MAX_PLAYLIST_TRACKS).await {
+                    log::warn!("liked songs: no more pages: {err}");
+                }
+                Ok::<_, rustypipe::error::Error>(liked.tracks.items)
+            };
             let (liked, playlists, albums, artists) = tokio::join!(
-                query.music_liked_tracks(),
-                query.music_saved_playlists(),
-                query.music_saved_albums(),
-                query.music_saved_artists(),
+                liked,
+                all_pages(&query, query.music_saved_playlists()),
+                all_pages(&query, query.music_saved_albums()),
+                all_pages(&query, query.music_saved_artists()),
             );
             Ok(Library {
-                liked: liked?.tracks.items.into_iter().map(Track::from).collect(),
-                playlists: playlists?.items.into_iter().map(Playlist::from).collect(),
+                liked: liked?.into_iter().map(Track::from).collect(),
+                playlists: playlists?.into_iter().map(Playlist::from).collect(),
                 // Albums and artists are extras: show the rest if one of them fails.
                 albums: albums
                     .inspect_err(|err| log::warn!("saved albums: {err}"))
-                    .map(|albums| albums.items.into_iter().map(Album::from).collect())
+                    .map(|albums| albums.into_iter().map(Album::from).collect())
                     .unwrap_or_default(),
                 artists: artists
                     .inspect_err(|err| log::warn!("saved artists: {err}"))
-                    .map(|artists| artists.items.into_iter().map(Artist::from).collect())
+                    .map(|artists| artists.into_iter().map(Artist::from).collect())
                     .unwrap_or_default(),
             })
         })
@@ -461,31 +533,46 @@ impl Client {
         })
     }
 
-    pub fn search_tracks(&self, query: String) -> impl Future<Output = Result<Vec<Track>>> + use<> {
+    pub fn search_tracks(
+        &self,
+        query: String,
+    ) -> impl Future<Output = Result<Page<Track>>> + use<> {
         let pipe = self.pipe.clone();
         self.spawn(async move {
             let result = pipe.query().music_search_tracks(&query).await?;
-            Ok(result.items.items.into_iter().map(Track::from).collect())
+            Ok(page_from(result.items))
         })
     }
 
-    pub fn search_albums(&self, query: String) -> impl Future<Output = Result<Vec<Album>>> + use<> {
+    pub fn search_albums(
+        &self,
+        query: String,
+    ) -> impl Future<Output = Result<Page<Album>>> + use<> {
         let pipe = self.pipe.clone();
         self.spawn(async move {
             let result = pipe.query().music_search_albums(&query).await?;
-            Ok(result.items.items.into_iter().map(Album::from).collect())
+            Ok(page_from(result.items))
         })
     }
 
     pub fn search_artists(
         &self,
         query: String,
-    ) -> impl Future<Output = Result<Vec<Artist>>> + use<> {
+    ) -> impl Future<Output = Result<Page<Artist>>> + use<> {
         let pipe = self.pipe.clone();
         self.spawn(async move {
             let result = pipe.query().music_search_artists(&query).await?;
-            Ok(result.items.items.into_iter().map(Artist::from).collect())
+            Ok(page_from(result.items))
         })
+    }
+
+    /// The next page of a list.
+    pub fn more<T: Send + 'static>(
+        &self,
+        more: More<T>,
+    ) -> impl Future<Output = Result<Page<T>>> + use<T> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move { (more.next)(pipe).await })
     }
 
     pub fn search_suggestions(
@@ -620,6 +707,134 @@ impl Client {
                 .raw(ClientType::DesktopMusic, endpoint, &body)
                 .await?;
             Ok(())
+        })
+    }
+
+    /// The user's own playlists, the ones songs can be added to (Liked Music is left out: it
+    /// changes by liking). Requires a session.
+    pub fn editable_playlists(&self) -> impl Future<Output = Result<Vec<Playlist>>> + use<> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move {
+            // YouTube Music's "Save to playlist" dialog lists them; it asks about a song, but
+            // the list is the same for any.
+            let body = serde_json::json!({ "videoIds": [ANY_VIDEO_ID] });
+            let response = pipe
+                .query()
+                .authenticated()
+                .raw(
+                    ClientType::DesktopMusic,
+                    "playlist/get_add_to_playlist",
+                    &body,
+                )
+                .await?;
+            parse_editable_playlists(&response)
+        })
+    }
+
+    /// Adds songs to one of the user's playlists; ones already in it are skipped.
+    pub fn add_to_playlist(
+        &self,
+        playlist_id: String,
+        track_ids: Vec<String>,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        let actions = track_ids
+            .into_iter()
+            .map(|id| {
+                serde_json::json!({
+                    "action": "ACTION_ADD_VIDEO",
+                    "addedVideoId": id,
+                    "dedupeOption": "DEDUPE_OPTION_SKIP",
+                })
+            })
+            .collect();
+        self.edit_playlist(playlist_id, actions)
+    }
+
+    /// Takes a song out of one of the user's playlists.
+    pub fn remove_from_playlist(
+        &self,
+        playlist_id: String,
+        track_id: String,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        let action = serde_json::json!({
+            "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID",
+            "removedVideoId": track_id,
+        });
+        self.edit_playlist(playlist_id, vec![action])
+    }
+
+    pub fn rename_playlist(
+        &self,
+        playlist_id: String,
+        title: String,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        let action = serde_json::json!({
+            "action": "ACTION_SET_PLAYLIST_NAME",
+            "playlistName": title,
+        });
+        self.edit_playlist(playlist_id, vec![action])
+    }
+
+    /// Creates a private playlist with these songs and returns its id.
+    pub fn create_playlist(
+        &self,
+        title: String,
+        track_ids: Vec<String>,
+    ) -> impl Future<Output = Result<String>> + use<> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move {
+            let body = serde_json::json!({
+                "title": title,
+                "description": "",
+                "privacyStatus": "PRIVATE",
+                "videoIds": track_ids,
+            });
+            let response = pipe
+                .query()
+                .authenticated()
+                .raw(ClientType::DesktopMusic, "playlist/create", &body)
+                .await?;
+            let response: serde_json::Value = serde_json::from_str(&response)?;
+            response["playlistId"]
+                .as_str()
+                .map(str::to_string)
+                .context("YouTube Music did not return the new playlist")
+        })
+    }
+
+    /// Deletes one of the user's playlists from their account. It cannot be undone.
+    pub fn delete_playlist(&self, playlist_id: String) -> impl Future<Output = Result<()>> + use<> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move {
+            ensure_editable(&playlist_id)?;
+            let body = serde_json::json!({ "playlistId": playlist_id });
+            pipe.query()
+                .authenticated()
+                .raw(ClientType::DesktopMusic, "playlist/delete", &body)
+                .await?;
+            Ok(())
+        })
+    }
+
+    fn edit_playlist(
+        &self,
+        playlist_id: String,
+        actions: Vec<serde_json::Value>,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        let pipe = self.pipe.clone();
+        self.spawn(async move {
+            ensure_editable(&playlist_id)?;
+            let body = serde_json::json!({ "playlistId": playlist_id, "actions": actions });
+            let response = pipe
+                .query()
+                .authenticated()
+                .raw(ClientType::DesktopMusic, "browse/edit_playlist", &body)
+                .await?;
+            let response: serde_json::Value = serde_json::from_str(&response)?;
+            match response["status"].as_str() {
+                None | Some("STATUS_SUCCEEDED") => Ok(()),
+                Some(status) => bail!("YouTube Music refused the change ({status})"),
+            }
         })
     }
 
@@ -1102,9 +1317,112 @@ async fn download_chunk(
     }
 }
 
+/// Any public video, for requests that need one but whose answer does not depend on it.
+const ANY_VIDEO_ID: &str = "jNQXAC9IVRw";
+
+/// Lists YouTube keeps itself (Liked Music, Episodes for Later…) have short ids, not the `PL…`
+/// of playlists users make; they must not be edited or deleted this way.
+fn ensure_editable(playlist_id: &str) -> Result<()> {
+    if playlist_id.starts_with("PL") {
+        Ok(())
+    } else {
+        bail!("{playlist_id} is not a playlist of the user")
+    }
+}
+
+/// The playlists in a "Save to playlist" dialog that songs can be added to and removed from.
+fn parse_editable_playlists(response: &str) -> Result<Vec<Playlist>> {
+    let response: serde_json::Value = serde_json::from_str(response)?;
+    let options = response["contents"][0]["addToPlaylistRenderer"]["playlists"]
+        .as_array()
+        .context("YouTube Music sent no playlists")?;
+    Ok(options
+        .iter()
+        .map(|option| &option["playlistAddToOptionRenderer"])
+        .filter(|option| !option["removeFromPlaylistServiceEndpoint"].is_null())
+        .filter_map(|option| {
+            let id = option["playlistId"].as_str()?;
+            ensure_editable(id).ok()?;
+            let title = text_of(&option["title"])?;
+            // "6 tracks", "1 canción"…: the first number.
+            let track_count = text_of(&option["shortBylineText"]).and_then(|byline| {
+                byline
+                    .split_whitespace()
+                    .next()
+                    .and_then(|count| count.replace([',', '.'], "").parse().ok())
+            });
+            let cover_url =
+                option["thumbnailRenderer"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"]
+                    .as_array()
+                    .and_then(|thumbnails| thumbnails.last())
+                    .and_then(|thumbnail| thumbnail["url"].as_str())
+                    .map(str::to_string);
+            Some(Playlist {
+                id: id.to_string(),
+                title,
+                owner: None,
+                track_count,
+                cover_url,
+            })
+        })
+        .collect())
+}
+
+/// The text of a YouTube `simpleText` or `runs` object.
+fn text_of(text: &serde_json::Value) -> Option<String> {
+    if let Some(simple) = text["simpleText"].as_str() {
+        return Some(simple.to_string());
+    }
+    let runs = text["runs"].as_array()?;
+    Some(runs.iter().filter_map(|run| run["text"].as_str()).collect())
+}
+
+/// Every page of a list, up to `MAX_LIBRARY_ITEMS`; the first one at least.
+async fn all_pages<T: FromYtItem>(
+    query: &RustyPipeQuery,
+    first: impl Future<Output = Result<Paginator<T>, rustypipe::error::Error>>,
+) -> Result<Vec<T>, rustypipe::error::Error> {
+    let mut paginator = first.await?;
+    // YouTube sometimes hands out a continuation whose page is empty (the saved playlists do),
+    // which rustypipe reports as an error: keep what came.
+    if let Err(err) = paginator.extend_limit(query, MAX_LIBRARY_ITEMS).await {
+        log::warn!(
+            "library: no more pages after {}: {err}",
+            paginator.items.len()
+        );
+    }
+    Ok(paginator.items)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editable_playlists_leave_out_liked_music() {
+        let response = r#"{"contents":[{"addToPlaylistRenderer":{"playlists":[
+            {"playlistAddToOptionRenderer":{"playlistId":"LM","title":{"simpleText":"Liked Music"},
+                "addToPlaylistServiceEndpoint":{}}},
+            {"playlistAddToOptionRenderer":{"playlistId":"PLabc","title":{"runs":[{"text":"aaa"}]},
+                "shortBylineText":{"runs":[{"text":"6"},{"text":" tracks"}]},
+                "addToPlaylistServiceEndpoint":{},"removeFromPlaylistServiceEndpoint":{},
+                "thumbnailRenderer":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[
+                    {"url":"small"},{"url":"large"}]}}}}}
+        ]}}]}"#;
+        let playlists = parse_editable_playlists(response).unwrap();
+        assert_eq!(playlists.len(), 1);
+        assert_eq!(playlists[0].id, "PLabc");
+        assert_eq!(playlists[0].title, "aaa");
+        assert_eq!(playlists[0].track_count, Some(6));
+        assert_eq!(playlists[0].cover_url.as_deref(), Some("large"));
+    }
+
+    #[test]
+    fn only_user_playlists_can_be_edited() {
+        assert!(ensure_editable("PLze97acQIEXm_CL_L8Fp8o7idJU0tlPGq").is_ok());
+        assert!(ensure_editable("LM").is_err());
+        assert!(ensure_editable("SE").is_err());
+    }
 
     // Fake values: only the domain and cookie names matter here.
     const SIGNED_IN: &str = "# Netscape HTTP Cookie File\n\

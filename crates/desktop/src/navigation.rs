@@ -7,11 +7,12 @@ use gpui::{
     MouseButton, ParentElement, Pixels, Point, Task, Window, div,
 };
 use gpui_m3::{Menu, MenuItem, context_menu};
-use ytm_core::{Album, Artist, Client, Track};
+use ytm_core::{Album, Artist, Client, Playlist, Track};
 
 use crate::account::Account;
 use crate::assets;
 use crate::playback::Playback;
+use crate::playlist_dialog::PlaylistDialogMode;
 use crate::toasts;
 
 pub enum NavigationEvent {
@@ -24,6 +25,8 @@ pub enum NavigationEvent {
         id: String,
         summary: Option<Artist>,
     },
+    /// A dialog that changes the user's playlists.
+    EditPlaylists(PlaylistDialogMode),
 }
 
 /// How long the pointer rests on a song before its stream is resolved ahead, so passing over a
@@ -35,6 +38,8 @@ const HOVER_WARM_UP_DELAY: Duration = Duration::from_millis(400);
 pub struct Navigation {
     client: Client,
     track_menu: Option<(Point<Pixels>, Track)>,
+    /// The playlist the song menu was opened in, so the song can be taken out of it.
+    menu_playlist: Option<Playlist>,
     /// The song under the pointer and the timer that resolves it ahead.
     hovered: Option<(String, Task<()>)>,
 }
@@ -46,6 +51,7 @@ impl Navigation {
         Navigation {
             client,
             track_menu: None,
+            menu_playlist: None,
             hovered: None,
         }
     }
@@ -81,10 +87,22 @@ impl Navigation {
         &mut self,
         position: Point<Pixels>,
         track: Track,
+        playlist: Option<Playlist>,
         cx: &mut Context<Self>,
     ) {
         self.track_menu = Some((position, track));
+        self.menu_playlist = playlist;
         cx.notify();
+    }
+
+    pub fn edit_playlists(&mut self, mode: PlaylistDialogMode, cx: &mut Context<Self>) {
+        self.track_menu = None;
+        cx.emit(NavigationEvent::EditPlaylists(mode));
+        cx.notify();
+    }
+
+    pub fn menu_playlist(&self) -> Option<&Playlist> {
+        self.menu_playlist.as_ref()
     }
 
     pub fn close_track_menu(&mut self, cx: &mut Context<Self>) {
@@ -105,7 +123,18 @@ pub fn with_track_menu(
     track: &Track,
     navigation: &Entity<Navigation>,
 ) -> Div {
+    with_playlist_track_menu(row, track, None, navigation)
+}
+
+/// [`with_track_menu`] for a song listed in `playlist`, whose menu can take it out.
+pub fn with_playlist_track_menu(
+    row: impl IntoElement,
+    track: &Track,
+    playlist: Option<&Playlist>,
+    navigation: &Entity<Navigation>,
+) -> Div {
     let track = track.clone();
+    let playlist = playlist.cloned();
     let navigation = navigation.clone();
     let hover_navigation = navigation.clone();
     let hover_id = track.id.clone();
@@ -114,9 +143,9 @@ pub fn with_track_menu(
             hover_navigation.update(cx, |navigation, cx| navigation.hover_track(&hover_id, cx));
         })
         .on_mouse_down(MouseButton::Right, move |event, _, cx| {
-            let track = track.clone();
+            let (track, playlist) = (track.clone(), playlist.clone());
             navigation.update(cx, |navigation, cx| {
-                navigation.show_track_menu(event.position, track, cx)
+                navigation.show_track_menu(event.position, track, playlist, cx)
             });
         })
         .child(row)
@@ -133,9 +162,13 @@ pub fn render_track_menu(
 ) -> Option<impl IntoElement> {
     let (position, track) = navigation.read(cx).track_menu()?.clone();
     let account_state = account.read(cx);
-    let liked = account_state
-        .is_signed_in()
-        .then(|| account_state.is_liked(&track.id));
+    let signed_in = account_state.is_signed_in();
+    let liked = signed_in.then(|| account_state.is_liked(&track.id));
+    let in_playlist = navigation
+        .read(cx)
+        .menu_playlist()
+        .filter(|playlist| account_state.is_editable(&playlist.id))
+        .cloned();
 
     // Every item acts on the song and closes the menu.
     let item = |id: &'static str, label: &'static str, icon: &'static str, action: TrackAction| {
@@ -203,6 +236,34 @@ pub fn render_track_menu(
                 to_navigation.update(cx, |navigation, cx| {
                     navigation.open_artist(artist_id, None, cx)
                 });
+            }),
+        ));
+    }
+
+    if signed_in {
+        let to_navigation = navigation.clone();
+        menu = menu.separator().item(item(
+            "save-to-playlist",
+            "Guardar en playlist",
+            "plus",
+            Box::new(move |track, _, cx| {
+                let mode = PlaylistDialogMode::SaveTo(vec![track.clone()]);
+                to_navigation.update(cx, |navigation, cx| navigation.edit_playlists(mode, cx));
+            }),
+        ));
+    }
+    if let Some(playlist) = in_playlist {
+        let to_navigation = navigation.clone();
+        menu = menu.item(item(
+            "remove-from-playlist",
+            "Quitar de esta playlist",
+            "trash",
+            Box::new(move |track, _, cx| {
+                let mode = PlaylistDialogMode::Remove {
+                    playlist: playlist.clone(),
+                    track: track.clone(),
+                };
+                to_navigation.update(cx, |navigation, cx| navigation.edit_playlists(mode, cx));
             }),
         ));
     }

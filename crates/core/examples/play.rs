@@ -13,7 +13,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let client = Client::new(std::env::temp_dir().join("ytm-core-examples"))?;
-    let tracks = block_on(client.search_tracks(query))?;
+    let tracks = block_on(client.search_tracks(query))?.items;
     for (index, track) in tracks.iter().take(5).enumerate() {
         println!("{index}. {} — {}", track.title, track.artists);
     }

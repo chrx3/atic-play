@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{App, ClickEvent, Entity, Window, div, img, prelude::*, px};
-use gpui_m3::{Button, NavItem, Theme};
+use gpui_m3::{Button, IconButton, NavItem, Theme};
 
 use ytm_core::Playlist;
 
@@ -36,6 +36,7 @@ pub struct Sidebar {
     on_navigate: NavigateHandler,
     on_open_playlist: OpenPlaylistHandler,
     on_sign_in: ActionHandler,
+    on_new_playlist: ActionHandler,
 }
 
 impl Sidebar {
@@ -46,6 +47,7 @@ impl Sidebar {
         on_navigate: impl Fn(Route, &mut Window, &mut App) + 'static,
         on_open_playlist: impl Fn(Playlist, &mut Window, &mut App) + 'static,
         on_sign_in: impl Fn(&mut Window, &mut App) + 'static,
+        on_new_playlist: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Self {
         Sidebar {
             route,
@@ -54,6 +56,7 @@ impl Sidebar {
             on_navigate: Rc::new(on_navigate),
             on_open_playlist: Rc::new(on_open_playlist),
             on_sign_in: Rc::new(on_sign_in),
+            on_new_playlist: Rc::new(on_new_playlist),
         }
     }
 
@@ -191,12 +194,26 @@ impl RenderOnce for Sidebar {
             .child(div().mx_3().my_3().h(px(1.)).bg(s.outline_variant))
             .child(
                 div()
-                    .px_3()
+                    .pl_3()
                     .pb_1()
+                    .flex()
+                    .items_center()
+                    .justify_between()
                     .text_sm()
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .text_color(s.on_surface_variant)
-                    .child("Playlists"),
+                    .child("Playlists")
+                    .when(self.account.read(cx).is_signed_in(), |header| {
+                        let on_new_playlist = self.on_new_playlist.clone();
+                        header.child(
+                            IconButton::new("new-playlist", "plus")
+                                .size(px(32.))
+                                .tooltip("Nueva playlist")
+                                .on_click(move |_: &ClickEvent, window, cx| {
+                                    on_new_playlist(window, cx)
+                                }),
+                        )
+                    }),
             )
             .child(self.render_playlists(cx))
             .child(self.render_account(cx))

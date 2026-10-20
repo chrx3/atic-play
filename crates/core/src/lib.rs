@@ -8,8 +8,8 @@ mod player;
 mod queue;
 
 pub use client::{
-    Album, AlbumPage, Artist, ArtistPage, Audio, Client, HomeFeed, Library, Playlist, PlaylistPage,
-    SearchSuggestions, Track,
+    Album, AlbumPage, Artist, ArtistPage, Audio, Client, HomeFeed, Library, More, Page, Playlist,
+    PlaylistPage, SearchSuggestions, Track,
 };
 pub use lyrics::{LyricLine, Lyrics, LyricsClient};
 pub use player::AudioPlayer;

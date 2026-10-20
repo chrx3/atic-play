@@ -7,12 +7,14 @@ use gpui::{
 use gpui_m3::{IconButton, ListItem, Theme};
 use ytm_core::{Client, Playlist, PlaylistPage, Track};
 
+use crate::account::{Account, AccountEvent};
 use crate::assets;
 use crate::covers::Covers;
 use crate::download_ui::{download_button, downloaded_mark};
 use crate::downloads::Downloads;
-use crate::navigation::{Navigation, with_track_menu};
+use crate::navigation::{Navigation, with_playlist_track_menu};
 use crate::playback::Playback;
+use crate::playlist_dialog::PlaylistDialogMode;
 use crate::ui::{
     CARD_COVER_SIZE, failed, format_time, friendly_error, placeholder, skeleton_rows, thumbnail,
 };
@@ -32,6 +34,7 @@ pub struct PlaylistView {
     playback: Entity<Playback>,
     covers: Entity<Covers>,
     navigation: Entity<Navigation>,
+    account: Entity<Account>,
     downloads: Entity<Downloads>,
     /// What the sidebar or library already knew, shown while the tracks load.
     summary: Option<Playlist>,
@@ -47,11 +50,22 @@ impl PlaylistView {
         playback: Entity<Playback>,
         covers: Entity<Covers>,
         navigation: Entity<Navigation>,
+        account: Entity<Account>,
         cx: &mut Context<Self>,
     ) -> Self {
         let downloads = Downloads::global(cx);
         let subscriptions = vec![
             cx.observe(&covers, |_, _, cx| cx.notify()),
+            // Whether the playlist is the user's own (rename, delete, take songs out).
+            cx.observe(&account, |_, _, cx| cx.notify()),
+            // Show a change made to this playlist.
+            cx.subscribe(&account, |this, _, event: &AccountEvent, cx| {
+                if let AccountEvent::PlaylistChanged(id) = event
+                    && let Some(playlist) = this.summary.clone().filter(|p| p.id == *id)
+                {
+                    this.reload(playlist, cx);
+                }
+            }),
             // Download progress and the marks on downloaded songs.
             cx.observe(&downloads, |_, _, cx| cx.notify()),
         ];
@@ -60,6 +74,7 @@ impl PlaylistView {
             playback,
             covers,
             navigation,
+            account,
             downloads,
             summary: None,
             state: State::Loading,
@@ -69,11 +84,16 @@ impl PlaylistView {
     }
 
     pub fn open(&mut self, playlist: Playlist, cx: &mut Context<Self>) {
+        self.state = State::Loading;
+        self.reload(playlist, cx);
+    }
+
+    /// Loads the playlist again, keeping what is on screen until it arrives.
+    fn reload(&mut self, playlist: Playlist, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
         let request = self.client.playlist(playlist.id.clone());
         self.summary = Some(playlist);
-        self.state = State::Loading;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
@@ -155,7 +175,8 @@ impl PlaylistView {
                         this.playback
                             .update(cx, |playback, cx| playback.play_tracks(tracks, index, cx));
                     }));
-                with_track_menu(row, &track, &self.navigation).into_any_element()
+                with_playlist_track_menu(row, &track, self.summary.as_ref(), &self.navigation)
+                    .into_any_element()
             })
             .collect()
     }
@@ -189,6 +210,10 @@ impl PlaylistView {
             meta.push(format!("{} canciones", page.tracks.len()));
         }
         let has_tracks = page.is_some_and(|page| !page.tracks.is_empty());
+        // Only the user's own playlists can be renamed and deleted.
+        let editable = playlist
+            .filter(|playlist| self.account.read(cx).is_editable(&playlist.id))
+            .cloned();
 
         div()
             .flex()
@@ -264,6 +289,28 @@ impl PlaylistView {
                                     &self.downloads,
                                     cx,
                                 )
+                            }))
+                            .children(editable.clone().map(|playlist| {
+                                let navigation = self.navigation.clone();
+                                IconButton::new("playlist-rename", "pen")
+                                    .tooltip("Renombrar")
+                                    .on_click(move |_: &ClickEvent, _, cx| {
+                                        let mode = PlaylistDialogMode::Rename(playlist.clone());
+                                        navigation.update(cx, |navigation, cx| {
+                                            navigation.edit_playlists(mode, cx)
+                                        });
+                                    })
+                            }))
+                            .children(editable.map(|playlist| {
+                                let navigation = self.navigation.clone();
+                                IconButton::new("playlist-delete", "trash")
+                                    .tooltip("Eliminar playlist")
+                                    .on_click(move |_: &ClickEvent, _, cx| {
+                                        let mode = PlaylistDialogMode::Delete(playlist.clone());
+                                        navigation.update(cx, |navigation, cx| {
+                                            navigation.edit_playlists(mode, cx)
+                                        });
+                                    })
                             })),
                     ),
             )
