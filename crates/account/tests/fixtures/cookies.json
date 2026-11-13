@@ -1,0 +1,19 @@
+[
+  { "name": "PREF", "value": "f1=abc&f2=def", "domain": ".youtube.com" },
+  { "name": "SAPISID", "value": "fake-sapisid-value", "domain": ".youtube.com" },
+  { "name": "SID", "value": "fake-sid-value", "domain": ".youtube.com" },
+  { "name": "HSID", "value": "fake-hsid-value", "domain": ".youtube.com" },
+  { "name": "SSID", "value": "fake-ssid-value", "domain": ".youtube.com" },
+  { "name": "APISID", "value": "fake-apisid-value", "domain": ".youtube.com" },
+  { "name": "LOGIN_INFO", "value": "QUJDREVGR0g=", "domain": ".youtube.com" },
+  { "name": "SIDCC", "value": "fake-sidcc-value", "domain": ".youtube.com" },
+  { "name": "__Secure-1PSID", "value": "fake-1psid-value", "domain": ".youtube.com" },
+  { "name": "__Secure-3PSID", "value": "fake-3psid-value", "domain": ".youtube.com" },
+  { "name": "__Secure-1PSIDTS", "value": "fake-1psidts-value", "domain": ".youtube.com" },
+  { "name": "__Secure-3PSIDTS", "value": "fake-3psidts-value", "domain": ".youtube.com" },
+  { "name": "__Secure-1PAPISID", "value": "fake-1papisid-value", "domain": ".youtube.com" },
+  { "name": "__Secure-3PAPISID", "value": "fake-3papisid-value", "domain": ".youtube.com" },
+  { "name": "NID", "value": "not-ours", "domain": ".google.com" },
+  { "name": "CONSENT", "value": "YES+cb", "domain": ".google.com" },
+  { "name": "IDE", "value": "not-ours-either", "domain": ".youtube.com" }
+]

@@ -1,0 +1,59 @@
+{
+  "responseContext": {
+    "serviceTrackingParams": [
+      {
+        "service": "GFEEDBACK",
+        "params": [{ "key": "logged_in", "value": "1" }]
+      }
+    ],
+    "responseId": "anon-account-menu-response"
+  },
+  "actions": [
+    {
+      "openPopupAction": {
+        "popup": {
+          "multiPageMenuRenderer": {
+            "header": {
+              "activeAccountHeaderRenderer": {
+                "accountName": {
+                  "runs": [{ "text": "Cuenta de Prueba" }]
+                },
+                "channelHandle": {
+                  "runs": [{ "text": "@cuenta-de-prueba" }]
+                },
+                "accountPhoto": {
+                  "thumbnails": [
+                    {
+                      "url": "https://yt3.googleusercontent.com/anon-account-photo=w88-h88-l90-rj",
+                      "width": 88,
+                      "height": 88
+                    },
+                    {
+                      "url": "https://yt3.googleusercontent.com/anon-account-photo=w176-h176-l90-rj",
+                      "width": 176,
+                      "height": 176
+                    }
+                  ]
+                }
+              }
+            },
+            "sections": [
+              {
+                "multiPageMenuSectionRenderer": {
+                  "items": [
+                    {
+                      "compactLinkRenderer": {
+                        "icon": { "iconType": "SETTINGS" },
+                        "title": { "runs": [{ "text": "Configuración" }] }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

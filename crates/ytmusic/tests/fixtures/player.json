@@ -1,0 +1,128 @@
+{
+ "playabilityStatus": {
+  "status": "OK"
+ },
+ "videoDetails": {
+  "videoId": "4D7u5KF7SP8",
+  "title": "Get Lucky (feat. Pharrell Williams and Nile Rodgers)",
+  "lengthSeconds": "370"
+ },
+ "streamingData": {
+  "expiresInSeconds": "21540",
+  "adaptiveFormats": [
+   {
+    "itag": 137,
+    "url": "https://rr1---sn-fake.googlevideo.com/videoplayback?expire=1794430151&clen=2702492&itag=137",
+    "mimeType": "video/mp4; codecs=\"avc1.640020\"",
+    "bitrate": 69290,
+    "width": 1080,
+    "height": 1080,
+    "initRange": {
+     "start": "0",
+     "end": "742"
+    },
+    "indexRange": {
+     "start": "743",
+     "end": "1410"
+    },
+    "lastModified": "1791027188486335",
+    "contentLength": "2702492",
+    "quality": "hd1080",
+    "fps": 25,
+    "qualityLabel": "1080p",
+    "projectionType": "RECTANGULAR",
+    "averageBitrate": 58495,
+    "approxDurationMs": "369600",
+    "qualityOrdinal": "QUALITY_ORDINAL_1080P"
+   },
+   {
+    "itag": 139,
+    "url": "https://rr1---sn-fake.googlevideo.com/videoplayback?expire=1794430151&clen=2256046&itag=139",
+    "mimeType": "audio/mp4; codecs=\"mp4a.40.5\"",
+    "bitrate": 50682,
+    "initRange": {
+     "start": "0",
+     "end": "767"
+    },
+    "indexRange": {
+     "start": "768",
+     "end": "1255"
+    },
+    "lastModified": "1791026906536151",
+    "contentLength": "2256046",
+    "quality": "tiny",
+    "projectionType": "RECTANGULAR",
+    "averageBitrate": 48823,
+    "audioQuality": "AUDIO_QUALITY_LOW",
+    "approxDurationMs": "369668",
+    "audioSampleRate": "22050",
+    "audioChannels": 2,
+    "loudnessDb": 3.1400003,
+    "trackAbsoluteLoudnessLkfs": -10.86,
+    "qualityOrdinal": "QUALITY_ORDINAL_UNKNOWN"
+   },
+   {
+    "itag": 140,
+    "url": "https://rr1---sn-fake.googlevideo.com/videoplayback?expire=1794430151&clen=5983881&itag=140",
+    "mimeType": "audio/mp4; codecs=\"mp4a.40.2\"",
+    "bitrate": 137064,
+    "initRange": {
+     "start": "0",
+     "end": "758"
+    },
+    "indexRange": {
+     "start": "759",
+     "end": "1246"
+    },
+    "lastModified": "1791026887400391",
+    "contentLength": "5983881",
+    "quality": "tiny",
+    "projectionType": "RECTANGULAR",
+    "averageBitrate": 129512,
+    "highReplication": true,
+    "audioQuality": "AUDIO_QUALITY_MEDIUM",
+    "approxDurationMs": "369626",
+    "audioSampleRate": "44100",
+    "audioChannels": 2,
+    "loudnessDb": 3.1400003,
+    "trackAbsoluteLoudnessLkfs": -10.86,
+    "qualityOrdinal": "QUALITY_ORDINAL_UNKNOWN"
+   },
+   {
+    "itag": 251,
+    "url": "https://rr1---sn-fake.googlevideo.com/videoplayback?expire=1794430151&clen=6214234&itag=251",
+    "mimeType": "audio/webm; codecs=\"opus\"",
+    "bitrate": 146460,
+    "initRange": {
+     "start": "0",
+     "end": "258"
+    },
+    "indexRange": {
+     "start": "259",
+     "end": "884"
+    },
+    "lastModified": "1791027274954638",
+    "contentLength": "6214234",
+    "quality": "tiny",
+    "projectionType": "RECTANGULAR",
+    "averageBitrate": 134492,
+    "audioQuality": "AUDIO_QUALITY_MEDIUM",
+    "approxDurationMs": "369641",
+    "audioSampleRate": "48000",
+    "audioChannels": 2,
+    "loudnessDb": 3.1400003,
+    "trackAbsoluteLoudnessLkfs": -10.86,
+    "qualityOrdinal": "QUALITY_ORDINAL_UNKNOWN"
+   }
+  ]
+ },
+ "playerConfig": {
+  "audioConfig": {
+   "loudnessDb": 3.1400003,
+   "perceptualLoudnessDb": -10.86,
+   "enablePerFormatLoudness": true,
+   "trackAbsoluteLoudnessLkfs": -10.86,
+   "loudnessTargetLkfs": -14
+  }
+ }
+}

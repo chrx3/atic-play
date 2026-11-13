@@ -1,0 +1,66 @@
+{
+  "responseContext": {
+    "serviceTrackingParams": [
+      {
+        "service": "GFEEDBACK",
+        "params": [
+          { "key": "browse_id", "value": "FEmusic_liked_videos" },
+          { "key": "logged_in", "value": "0" }
+        ]
+      }
+    ],
+    "responseId": "anon-signed-out-library-response"
+  },
+  "contents": {
+    "singleColumnBrowseResultsRenderer": {
+      "tabs": [
+        {
+          "tabRenderer": {
+            "selected": true,
+            "content": {
+              "sectionListRenderer": {
+                "contents": [
+                  {
+                    "itemSectionRenderer": {
+                      "contents": [
+                        {
+                          "messageRenderer": {
+                            "text": {
+                              "runs": [{ "text": "Explora tus favoritas" }]
+                            },
+                            "button": {
+                              "buttonRenderer": {
+                                "style": "STYLE_DEFAULT",
+                                "text": {
+                                  "runs": [{ "text": "Iniciar sesión" }]
+                                },
+                                "navigationEndpoint": {
+                                  "signInEndpoint": { "hack": true }
+                                }
+                              }
+                            },
+                            "subtext": {
+                              "messageSubtextRenderer": {
+                                "text": {
+                                  "runs": [
+                                    {
+                                      "text": "Inicia sesión para acceder a las canciones que te han gustado o que has guardado"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

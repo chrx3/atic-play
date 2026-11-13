@@ -1,0 +1,45 @@
+[package]
+name = "atic-play"
+description = "Fast, comfortable desktop music player built with GPUI and gpui-m3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "atic-play"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+play-ytmusic = { path = "../ytmusic" }
+play-audio = { path = "../audio" }
+play-lyrics = { path = "../lyrics" }
+# The session lives in the system keyring; the app only needs the library, not the login window
+# (that is a separate binary, `atic-play-login`, built from the same crate).
+play-account = { path = "../account", default-features = false }
+gpui = "0.2.2"
+gpui-m3 = { git = "https://github.com/chrx3/gpui-m3" }
+# Cover art: downloaded with ureq and decoded with image (same 0.25 GPUI uses).
+ureq.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# Preferences: settings.json under the user's data directory.
+serde.workspace = true
+serde_json.workspace = true
+
+# The window icon, the dark title bar and the media panel still need the platform API: GPUI 0.2
+# exposes the window handle but no icon, no title bar colour and no SystemMediaTransportControls.
+# `windows` is already in the tree through wry, so the same 0.62 is reused.
+[target.'cfg(target_os = "windows")'.dependencies]
+raw-window-handle = "0.6"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Media",
+    "Media_Playback",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_System_WinRT",
+    "Win32_UI_WindowsAndMessaging",
+] }

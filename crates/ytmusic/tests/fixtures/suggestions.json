@@ -1,0 +1,70 @@
+{
+ "contents": [
+  {
+   "searchSuggestionsSectionRenderer": {
+    "contents": [
+     {
+      "searchSuggestionRenderer": {
+       "suggestion": {
+        "runs": [
+         {
+          "text": "daft",
+          "bold": true
+         },
+         {
+          "text": " punk"
+         }
+        ]
+       },
+       "navigationEndpoint": {
+        "searchEndpoint": {
+         "query": "daft punk"
+        }
+       }
+      }
+     },
+     {
+      "searchSuggestionRenderer": {
+       "suggestion": {
+        "runs": [
+         {
+          "text": "daft",
+          "bold": true
+         },
+         {
+          "text": " punk get lucky"
+         }
+        ]
+       },
+       "navigationEndpoint": {
+        "searchEndpoint": {
+         "query": "daft punk get lucky"
+        }
+       }
+      }
+     },
+     {
+      "searchSuggestionRenderer": {
+       "suggestion": {
+        "runs": [
+         {
+          "text": "daft",
+          "bold": true
+         },
+         {
+          "text": " punk instant crush"
+         }
+        ]
+       },
+       "navigationEndpoint": {
+        "searchEndpoint": {
+         "query": "daft punk instant crush"
+        }
+       }
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

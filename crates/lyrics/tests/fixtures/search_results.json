@@ -1,0 +1,67 @@
+[
+  {
+    "id": 1,
+    "name": "Bohemian Rhapsody",
+    "trackName": "Bohemian Rhapsody",
+    "artistName": "Queen",
+    "albumName": "A Night at the Opera",
+    "duration": 355.0,
+    "instrumental": false,
+    "hasWordSync": false,
+    "plainLyrics": "Is this the real life?\nIs this just fantasy?",
+    "syncedLyrics": "[00:00.00]Is this the real life?\n[00:05.00]Is this just fantasy?",
+    "lyricsfile": "version: '1.0'\n"
+  },
+  {
+    "id": 2,
+    "name": "Bohemian Rhapsody",
+    "trackName": "Bohemian Rhapsody",
+    "artistName": "Queen",
+    "albumName": "Greatest Hits",
+    "duration": 356.0,
+    "instrumental": false,
+    "hasWordSync": false,
+    "plainLyrics": "Is this the real life?\nIs this just fantasy?",
+    "syncedLyrics": null,
+    "lyricsfile": "version: '1.0'\n"
+  },
+  {
+    "id": 3,
+    "name": "Bohemian Rhapsody (Instrumental)",
+    "trackName": "Bohemian Rhapsody (Instrumental)",
+    "artistName": "Queen",
+    "albumName": "Greatest Hits",
+    "duration": 120.0,
+    "instrumental": true,
+    "hasWordSync": false,
+    "plainLyrics": null,
+    "syncedLyrics": null,
+    "lyricsfile": "version: '1.0'\n"
+  },
+  {
+    "id": 4,
+    "name": "Bohemian Rhapsody",
+    "trackName": "Bohemian Rhapsody",
+    "artistName": "Queen",
+    "albumName": "A Night at the Opera",
+    "duration": 357.0,
+    "instrumental": false,
+    "hasWordSync": false,
+    "plainLyrics": "Is this the real life?",
+    "syncedLyrics": null,
+    "lyricsfile": "version: '1.0'\n"
+  },
+  {
+    "id": 5,
+    "name": "Bohemian Rhapsody",
+    "trackName": "Bohemian Rhapsody",
+    "artistName": "Queen",
+    "albumName": "Queen Rocks",
+    "duration": 356.0,
+    "instrumental": false,
+    "hasWordSync": false,
+    "plainLyrics": "Is this the real life?",
+    "syncedLyrics": null,
+    "lyricsfile": "version: '1.0'\n"
+  }
+]

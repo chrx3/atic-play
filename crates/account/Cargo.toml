@@ -1,0 +1,25 @@
+[package]
+name = "play-account"
+description = "Google account for Atic Play: session in the system keyring and the login window"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["login-window"]
+# The login window needs a web view; the library itself never touches a GUI.
+login-window = ["dep:tao", "dep:wry"]
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+keyring = { version = "4", default-features = false, features = ["v1"] }
+tao = { version = "0.37", optional = true }
+wry = { version = "0.57", optional = true }
+
+[[bin]]
+name = "atic-play-login"
+path = "src/bin/atic-play-login.rs"
+required-features = ["login-window"]

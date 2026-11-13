@@ -1,0 +1,628 @@
+{
+ "contents": {
+  "singleColumnBrowseResultsRenderer": {
+   "tabs": [
+    {
+     "tabRenderer": {
+      "content": {
+       "sectionListRenderer": {
+        "contents": [
+         {
+          "musicCarouselShelfRenderer": {
+           "header": {
+            "musicCarouselShelfBasicHeaderRenderer": {
+             "title": {
+              "runs": [
+               {
+                "text": "Melodías alegres"
+               }
+              ]
+             }
+            }
+           },
+           "contents": [
+            {
+             "musicTwoRowItemRenderer": {
+              "thumbnailRenderer": {
+               "musicThumbnailRenderer": {
+                "thumbnail": {
+                 "thumbnails": [
+                  {
+                   "url": "https://yt3.googleusercontent.com/Vw89AQY4_btJqrbWD9SmkrPE2XZo3TdvzwQB8GaHTBw-IBYAtxesLz-GgRXf94nxtLmCeRN22wRKSaI=w226-h226-l90-rj",
+                   "width": 226,
+                   "height": 226
+                  },
+                  {
+                   "url": "https://yt3.googleusercontent.com/Vw89AQY4_btJqrbWD9SmkrPE2XZo3TdvzwQB8GaHTBw-IBYAtxesLz-GgRXf94nxtLmCeRN22wRKSaI=w544-h544-l90-rj",
+                   "width": 544,
+                   "height": 544
+                  }
+                 ]
+                }
+               }
+              },
+              "title": {
+               "runs": [
+                {
+                 "text": "Pop Alegre de Hoy",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLRDCLAK5uy_la_vISXt1T4mKZhhaYKuLiig6JC21JvqY",
+                   "params": "ggMEgAKPAw%3D%3D",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {
+               "runs": [
+                {
+                 "text": "Taylor Swift"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Bruno Mars"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Kapo"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Dua Lipa"
+                }
+               ]
+              },
+              "navigationEndpoint": {
+               "browseEndpoint": {
+                "browseId": "VLRDCLAK5uy_la_vISXt1T4mKZhhaYKuLiig6JC21JvqY",
+                "params": "ggMEgAKPAw%3D%3D",
+                "browseEndpointContextSupportedConfigs": {
+                 "browseEndpointContextMusicConfig": {
+                  "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                 }
+                }
+               }
+              },
+              "thumbnailOverlay": {
+               "musicItemThumbnailOverlayRenderer": {
+                "content": {
+                 "musicPlayButtonRenderer": {
+                  "playNavigationEndpoint": {
+                   "watchPlaylistEndpoint": {
+                    "playlistId": "RDCLAK5uy_la_vISXt1T4mKZhhaYKuLiig6JC21JvqY",
+                    "params": "wAEB"
+                   }
+                  },
+                  "playIcon": {
+                   "iconType": "PLAY_ARROW"
+                  },
+                  "iconColor": 4294967295,
+                  "accessibilityPlayData": {},
+                  "accessibilityPauseData": {}
+                 }
+                }
+               }
+              }
+             }
+            },
+            {
+             "musicTwoRowItemRenderer": {
+              "thumbnailRenderer": {
+               "musicThumbnailRenderer": {
+                "thumbnail": {
+                 "thumbnails": [
+                  {
+                   "url": "https://yt3.googleusercontent.com/xJCCWuWVzrkweX1kW83kUyKcjqGKEBI9I0F3wBNO8UzUYISX1t2a_aqlTWeiISh8krdI329ZqTmkUA=w226-h226-l90-rj",
+                   "width": 226,
+                   "height": 226
+                  },
+                  {
+                   "url": "https://yt3.googleusercontent.com/xJCCWuWVzrkweX1kW83kUyKcjqGKEBI9I0F3wBNO8UzUYISX1t2a_aqlTWeiISh8krdI329ZqTmkUA=w544-h544-l90-rj",
+                   "width": 544,
+                   "height": 544
+                  }
+                 ]
+                }
+               }
+              },
+              "title": {
+               "runs": [
+                {
+                 "text": "Pop Latino Alegre",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLRDCLAK5uy_lw21MuKaqFsDBIPZSbRmZcoDrHmV_c6uY",
+                   "params": "ggMEgAKPAw%3D%3D",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {
+               "runs": [
+                {
+                 "text": "KAROL G"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Juanes"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Sebastián Yatra"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Shakira"
+                }
+               ]
+              },
+              "navigationEndpoint": {
+               "browseEndpoint": {
+                "browseId": "VLRDCLAK5uy_lw21MuKaqFsDBIPZSbRmZcoDrHmV_c6uY",
+                "params": "ggMEgAKPAw%3D%3D",
+                "browseEndpointContextSupportedConfigs": {
+                 "browseEndpointContextMusicConfig": {
+                  "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                 }
+                }
+               }
+              },
+              "thumbnailOverlay": {
+               "musicItemThumbnailOverlayRenderer": {
+                "content": {
+                 "musicPlayButtonRenderer": {
+                  "playNavigationEndpoint": {
+                   "watchPlaylistEndpoint": {
+                    "playlistId": "RDCLAK5uy_lw21MuKaqFsDBIPZSbRmZcoDrHmV_c6uY",
+                    "params": "wAEB"
+                   }
+                  },
+                  "playIcon": {
+                   "iconType": "PLAY_ARROW"
+                  },
+                  "iconColor": 4294967295,
+                  "accessibilityPlayData": {},
+                  "accessibilityPauseData": {}
+                 }
+                }
+               }
+              }
+             }
+            },
+            {
+             "musicTwoRowItemRenderer": {
+              "thumbnailRenderer": {
+               "musicThumbnailRenderer": {
+                "thumbnail": {
+                 "thumbnails": [
+                  {
+                   "url": "https://yt3.googleusercontent.com/l2I1Z09zNrVH6CMvAW6MAk_N1lcSSbtdh8RHO_i94J_7K8AjbS7ACTf3C6qtcS7SiwFTeWjTuDETcwXn=w226-h226-l90-rj",
+                   "width": 226,
+                   "height": 226
+                  },
+                  {
+                   "url": "https://yt3.googleusercontent.com/l2I1Z09zNrVH6CMvAW6MAk_N1lcSSbtdh8RHO_i94J_7K8AjbS7ACTf3C6qtcS7SiwFTeWjTuDETcwXn=w544-h544-l90-rj",
+                   "width": 544,
+                   "height": 544
+                  }
+                 ]
+                }
+               }
+              },
+              "title": {
+               "runs": [
+                {
+                 "text": "Éxitos Clásicos del Pop Argentino",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLRDCLAK5uy_nTwUUin1Y9_g5gKVBM2ZtDlU3TFek3nqo",
+                   "params": "ggMEgAKPAw%3D%3D",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {
+               "runs": [
+                {
+                 "text": "Los Auténticos Decadentes"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Los Enanitos Verdes"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Vilma Palma e Vampiros"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Diego Torres"
+                }
+               ]
+              },
+              "navigationEndpoint": {
+               "browseEndpoint": {
+                "browseId": "VLRDCLAK5uy_nTwUUin1Y9_g5gKVBM2ZtDlU3TFek3nqo",
+                "params": "ggMEgAKPAw%3D%3D",
+                "browseEndpointContextSupportedConfigs": {
+                 "browseEndpointContextMusicConfig": {
+                  "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                 }
+                }
+               }
+              },
+              "thumbnailOverlay": {
+               "musicItemThumbnailOverlayRenderer": {
+                "content": {
+                 "musicPlayButtonRenderer": {
+                  "playNavigationEndpoint": {
+                   "watchPlaylistEndpoint": {
+                    "playlistId": "RDCLAK5uy_nTwUUin1Y9_g5gKVBM2ZtDlU3TFek3nqo",
+                    "params": "wAEB"
+                   }
+                  },
+                  "playIcon": {
+                   "iconType": "PLAY_ARROW"
+                  },
+                  "iconColor": 4294967295,
+                  "accessibilityPlayData": {},
+                  "accessibilityPauseData": {}
+                 }
+                }
+               }
+              }
+             }
+            }
+           ]
+          }
+         },
+         {
+          "musicCarouselShelfRenderer": {
+           "header": {
+            "musicCarouselShelfBasicHeaderRenderer": {
+             "title": {
+              "runs": [
+               {
+                "text": "Sube el volumen"
+               }
+              ]
+             }
+            }
+           },
+           "contents": [
+            {
+             "musicTwoRowItemRenderer": {
+              "thumbnailRenderer": {
+               "musicThumbnailRenderer": {
+                "thumbnail": {
+                 "thumbnails": [
+                  {
+                   "url": "https://yt3.googleusercontent.com/On29YybOcGIYHKq1p8DnOTtI1jL_f5UxTKoTL4wkkdBo5muqPHdXuGNQBzw5ZNWkwRbG766J58uZ4RpG=w226-h226-l90-rj",
+                   "width": 226,
+                   "height": 226
+                  },
+                  {
+                   "url": "https://yt3.googleusercontent.com/On29YybOcGIYHKq1p8DnOTtI1jL_f5UxTKoTL4wkkdBo5muqPHdXuGNQBzw5ZNWkwRbG766J58uZ4RpG=w544-h544-l90-rj",
+                   "width": 544,
+                   "height": 544
+                  }
+                 ]
+                }
+               }
+              },
+              "title": {
+               "runs": [
+                {
+                 "text": "Rock de los 2000",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLRDCLAK5uy_no4fdEphgrAtVis0A2c8KHCSwXEGb3sAg",
+                   "params": "ggMEgAKPAw%3D%3D",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {
+               "runs": [
+                {
+                 "text": "The Killers"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Linkin Park"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Metallica"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Fall Out Boy"
+                }
+               ]
+              },
+              "navigationEndpoint": {
+               "browseEndpoint": {
+                "browseId": "VLRDCLAK5uy_no4fdEphgrAtVis0A2c8KHCSwXEGb3sAg",
+                "params": "ggMEgAKPAw%3D%3D",
+                "browseEndpointContextSupportedConfigs": {
+                 "browseEndpointContextMusicConfig": {
+                  "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                 }
+                }
+               }
+              },
+              "thumbnailOverlay": {
+               "musicItemThumbnailOverlayRenderer": {
+                "content": {
+                 "musicPlayButtonRenderer": {
+                  "playNavigationEndpoint": {
+                   "watchPlaylistEndpoint": {
+                    "playlistId": "RDCLAK5uy_no4fdEphgrAtVis0A2c8KHCSwXEGb3sAg",
+                    "params": "wAEB"
+                   }
+                  },
+                  "playIcon": {
+                   "iconType": "PLAY_ARROW"
+                  },
+                  "iconColor": 4294967295,
+                  "accessibilityPlayData": {},
+                  "accessibilityPauseData": {}
+                 }
+                }
+               }
+              }
+             }
+            },
+            {
+             "musicTwoRowItemRenderer": {
+              "thumbnailRenderer": {
+               "musicThumbnailRenderer": {
+                "thumbnail": {
+                 "thumbnails": [
+                  {
+                   "url": "https://yt3.googleusercontent.com/10HmtfKDaqw9vahe6COCjB0ico4CUzJ4xZTfYsnLc9D24Nsni05OaYBmpDIRPI2K7NdyEI-paAqVET4=w226-h226-l90-rj",
+                   "width": 226,
+                   "height": 226
+                  },
+                  {
+                   "url": "https://yt3.googleusercontent.com/10HmtfKDaqw9vahe6COCjB0ico4CUzJ4xZTfYsnLc9D24Nsni05OaYBmpDIRPI2K7NdyEI-paAqVET4=w544-h544-l90-rj",
+                   "width": 544,
+                   "height": 544
+                  }
+                 ]
+                }
+               }
+              },
+              "title": {
+               "runs": [
+                {
+                 "text": "Cumbia Pop",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLRDCLAK5uy_l0WyZeocd3Pjplx0meEc9K7otXnJhBnxs",
+                   "params": "ggMEgAKPAw%3D%3D",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {
+               "runs": [
+                {
+                 "text": "Rombai"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Tiago PZK"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Migrantes"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Marama"
+                }
+               ]
+              },
+              "navigationEndpoint": {
+               "browseEndpoint": {
+                "browseId": "VLRDCLAK5uy_l0WyZeocd3Pjplx0meEc9K7otXnJhBnxs",
+                "params": "ggMEgAKPAw%3D%3D",
+                "browseEndpointContextSupportedConfigs": {
+                 "browseEndpointContextMusicConfig": {
+                  "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                 }
+                }
+               }
+              },
+              "thumbnailOverlay": {
+               "musicItemThumbnailOverlayRenderer": {
+                "content": {
+                 "musicPlayButtonRenderer": {
+                  "playNavigationEndpoint": {
+                   "watchPlaylistEndpoint": {
+                    "playlistId": "RDCLAK5uy_l0WyZeocd3Pjplx0meEc9K7otXnJhBnxs",
+                    "params": "wAEB"
+                   }
+                  },
+                  "playIcon": {
+                   "iconType": "PLAY_ARROW"
+                  },
+                  "iconColor": 4294967295,
+                  "accessibilityPlayData": {},
+                  "accessibilityPauseData": {}
+                 }
+                }
+               }
+              }
+             }
+            },
+            {
+             "musicTwoRowItemRenderer": {
+              "thumbnailRenderer": {
+               "musicThumbnailRenderer": {
+                "thumbnail": {
+                 "thumbnails": [
+                  {
+                   "url": "https://yt3.googleusercontent.com/FG_0L-cOvItkL8FHHQEprGLGrCOCKbdnlIBFIh_gNB5KAeKfEblb08s3sKsRwmEOIZOz1iJnz3e0-S0=w226-h226-l90-rj",
+                   "width": 226,
+                   "height": 226
+                  },
+                  {
+                   "url": "https://yt3.googleusercontent.com/FG_0L-cOvItkL8FHHQEprGLGrCOCKbdnlIBFIh_gNB5KAeKfEblb08s3sKsRwmEOIZOz1iJnz3e0-S0=w544-h544-l90-rj",
+                   "width": 544,
+                   "height": 544
+                  }
+                 ]
+                }
+               }
+              },
+              "title": {
+               "runs": [
+                {
+                 "text": "Bailando con la Escoba",
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLRDCLAK5uy_k4QNAro7aEx9CClDY9Wz5-G_CC_aO6NcU",
+                   "params": "ggMEgAKPAw%3D%3D",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               ]
+              },
+              "subtitle": {
+               "runs": [
+                {
+                 "text": "Bad Bunny"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "J Balvin"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Shakira"
+                },
+                {
+                 "text": ", "
+                },
+                {
+                 "text": "Daddy Yankee"
+                }
+               ]
+              },
+              "navigationEndpoint": {
+               "browseEndpoint": {
+                "browseId": "VLRDCLAK5uy_k4QNAro7aEx9CClDY9Wz5-G_CC_aO6NcU",
+                "params": "ggMEgAKPAw%3D%3D",
+                "browseEndpointContextSupportedConfigs": {
+                 "browseEndpointContextMusicConfig": {
+                  "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                 }
+                }
+               }
+              },
+              "thumbnailOverlay": {
+               "musicItemThumbnailOverlayRenderer": {
+                "content": {
+                 "musicPlayButtonRenderer": {
+                  "playNavigationEndpoint": {
+                   "watchPlaylistEndpoint": {
+                    "playlistId": "RDCLAK5uy_k4QNAro7aEx9CClDY9Wz5-G_CC_aO6NcU",
+                    "params": "wAEB"
+                   }
+                  },
+                  "playIcon": {
+                   "iconType": "PLAY_ARROW"
+                  },
+                  "iconColor": 4294967295,
+                  "accessibilityPlayData": {},
+                  "accessibilityPauseData": {}
+                 }
+                }
+               }
+              }
+             }
+            }
+           ]
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   ]
+  }
+ }
+}

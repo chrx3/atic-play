@@ -1,0 +1,89 @@
+{
+  "responseContext": {
+    "serviceTrackingParams": [
+      {
+        "service": "GFEEDBACK",
+        "params": [{ "key": "logged_in", "value": "1" }]
+      }
+    ],
+    "responseId": "anon-liked-songs-next-response"
+  },
+  "continuationContents": {
+    "musicShelfContinuation": {
+      "contents": [
+        {
+          "musicResponsiveListItemRenderer": {
+            "thumbnail": {
+              "musicThumbnailRenderer": {
+                "thumbnail": {
+                  "thumbnails": [
+                    {
+                      "url": "https://lh3.googleusercontent.com/anon-liked-song-three=w60-h60-l90-rj",
+                      "width": 60,
+                      "height": 60
+                    }
+                  ]
+                }
+              }
+            },
+            "overlay": {
+              "musicItemThumbnailOverlayRenderer": {
+                "content": {
+                  "musicPlayButtonRenderer": {
+                    "playNavigationEndpoint": {
+                      "watchEndpoint": {
+                        "videoId": "liked000003",
+                        "playlistId": "RDAMVMliked000003"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "flexColumns": [
+              {
+                "musicResponsiveListItemFlexColumnRenderer": {
+                  "text": {
+                    "runs": [
+                      {
+                        "text": "Tercera Canción",
+                        "navigationEndpoint": {
+                          "watchEndpoint": { "videoId": "liked000003" }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "musicResponsiveListItemFlexColumnRenderer": {
+                  "text": {
+                    "runs": [{ "text": "Artista de Prueba" }]
+                  }
+                }
+              }
+            ],
+            "fixedColumns": [
+              {
+                "musicResponsiveListItemFixedColumnRenderer": {
+                  "text": { "runs": [{ "text": "2:58" }] },
+                  "size": "MUSIC_RESPONSIVE_LIST_ITEM_FIXED_COLUMN_SIZE_SMALL"
+                }
+              }
+            ],
+            "playlistItemData": { "videoId": "liked000003" },
+            "index": { "runs": [{ "text": "3" }] }
+          }
+        }
+      ],
+      "continuations": [
+        {
+          "nextContinuationData": {
+            "continuation": "ANON_LIKED_SONGS_PAGE_3",
+            "clickTrackingParams": "anon"
+          }
+        }
+      ]
+    }
+  }
+}
